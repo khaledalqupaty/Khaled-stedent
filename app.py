@@ -1,13 +1,24 @@
 import streamlit as st
+from data.mock_data import load_data  # تأكد أن المسار صحيح
 
-# إعداد الصفحة
 st.set_page_config(page_title="التطبيق", layout="wide")
 
-# محتوى الصفحة الرئيسية
+# تحميل البيانات
+load_data()
+
+# الصفحة الرئيسية
 st.title("الصفحة الرئيسية")
 st.write("هذه الصفحة الرئيسية للتطبيق")
 
-# القائمة الجانبية (تأكد من ظهورها)
+# عرض بيانات الطالبات
+st.subheader("قائمة الطالبات")
+st.dataframe(st.session_state.students_db)
+
+# عرض بيانات السائقين
+st.subheader("قائمة السائقين")
+st.dataframe(st.session_state.buses_db)
+
+# القائمة الجانبية
 with st.sidebar:
     st.header("القائمة الرئيسية")
     st.write("اختر الصفحة من هنا:")
