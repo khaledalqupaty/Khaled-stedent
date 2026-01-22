@@ -44,13 +44,17 @@ if "buses_db" not in st.session_state:
     ]))
 
 # ───────────────────────────────────────────────
-# إعداد الصفحة + ستايل عصري 2025/2026
+# إعداد الصفحة + ستايل عصري مع إصلاح النصوص
 # ───────────────────────────────────────────────
 st.set_page_config(
-    page_title="إدارة باصات المدرسة",
+    page_title="الخالد للنقل - إدارة نقل الطالبات",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# رابط الشعار من Google Drive (استخدم واحد من الروابط اللي يشتغل معك)
+LOGO_URL = "https://drive.google.com/uc?id=1WxVKMdn81Fmb8PQFUtR8avlMkhkHhDJX"
+# أو جرب: "https://drive.google.com/uc?export=view&id=1WxVKMdn81Fmb8PQFUtR8avlMkhkHhDJX"
 
 st.markdown("""
 <style>
@@ -59,9 +63,9 @@ st.markdown("""
         --primary-dark: #1565c0;
         --success: #388e3c;
         --danger: #d32f2f;
-        --bg: #f5faff;
+        --bg: #f8fafc;
         --card: white;
-        --text: #1a237e;
+        --text: #0f172a;
     }
 
     .stApp {
@@ -87,8 +91,7 @@ st.markdown("""
 
     .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 8px 20px rgba(25,118,210,0.35);
-        background: linear-gradient(135deg, #1565c0, #1976d2);
+        box-shadow: 0 8px 20px rgba(25,118,210,0.4);
     }
 
     /* كروت Dashboard */
@@ -110,28 +113,72 @@ st.markdown("""
     .paid   {background: #e8f5e9; color: var(--success); padding: 0.5rem 1rem; border-radius: 999px; font-weight: 600;}
     .pending{background: #ffebee; color: var(--danger);  padding: 0.5rem 1rem; border-radius: 999px; font-weight: 600;}
 
+    /* إصلاح وضوح النصوص في multiselect و selectbox و data_editor */
+    .stMultiSelect [data-baseweb="select"] span,
+    .stMultiSelect [data-baseweb="tag"] span,
+    .stMultiSelect [data-baseweb="option"] span,
+    .stSelectbox [data-baseweb="select"] span,
+    .stSelectbox [data-baseweb="option"] span,
+    .stDataEditor [role="gridcell"] div,
+    .stTextInput input,
+    .stNumberInput input,
+    .stTextArea textarea {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        background-color: transparent !important;
+    }
+
+    [data-baseweb="popover"] ul,
+    [data-baseweb="listbox"] {
+        background-color: white !important;
+        color: #111 !important;
+    }
+
+    [data-baseweb="option"] {
+        color: #111 !important;
+        background-color: white !important;
+    }
+
+    [data-baseweb="option"]:hover {
+        background-color: #e3f2fd !important;
+        color: #000 !important;
+    }
+
     /* Sidebar */
     [data-testid="stSidebar"] {
         background: linear-gradient(to bottom, #e3f2fd, #bbdefb);
         border-radius: 0 16px 16px 0;
     }
 
-    /* تحسين الـ expander */
-    .stExpander {
-        border-radius: 10px;
-        border: 1px solid #bbdefb;
-        margin-bottom: 0.8rem;
+    /* نصوص عامة */
+    .stApp p, .stApp div, .stApp span, .stApp label {
+        color: #1e293b !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚌 إدارة نقل الطالبات – نسخة احترافية")
+# ───────────────────────────────────────────────
+# عرض الشعار + اسم الشركة في الأعلى
+# ───────────────────────────────────────────────
+col_logo, col_title = st.columns([1, 5])
+with col_logo:
+    try:
+        st.image(LOGO_URL, width=160)
+    except:
+        st.caption("الشعار (اضغط refresh إذا لم يظهر)")
+
+with col_title:
+    st.title("الخالد للنقل")
+    st.subheader("نقل طالبات آمن ومريح في الرياض")
 
 # ───────────────────────────────────────────────
 # الشريط الجانبي
 # ───────────────────────────────────────────────
 with st.sidebar:
-    st.header("التنقل")
+    st.image(LOGO_URL, width=180, use_column_width=True)
+    st.header("الخالد للنقل")
+    st.caption("إدارة النقل اليومي")
+
     page = st.radio("اختر الصفحة", [
         "📊 Dashboard",
         "👧 الطالبات",
@@ -144,8 +191,9 @@ with st.sidebar:
     st.caption(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 # ───────────────────────────────────────────────
-# Dashboard – مع كروت تفاعلية
+# باقي الصفحات (كما في النسخة السابقة مع الإصلاحات)
 # ───────────────────────────────────────────────
+
 if page == "📊 Dashboard":
     st.header("نظرة عامة اليوم")
 
@@ -186,9 +234,6 @@ if page == "📊 Dashboard":
     else:
         st.info("لم يتم تسجيل أي توزيع لهذا اليوم بعد")
 
-# ───────────────────────────────────────────────
-# باقي الصفحات (باقي الكود كما هو مع تحسينات بسيطة)
-# ───────────────────────────────────────────────
 
 elif page == "👧 الطالبات":
     st.header("إدارة الطالبات")
@@ -209,6 +254,7 @@ elif page == "👧 الطالبات":
         st.success("تم الحفظ بنجاح!")
         st.rerun()
 
+
 elif page == "🚌 السائقين":
     st.header("إدارة السائقين والباصات")
 
@@ -227,6 +273,7 @@ elif page == "🚌 السائقين":
         save_buses()
         st.success("تم الحفظ!")
         st.rerun()
+
 
 elif page == "📅 التوزيع اليومي":
     st.header("توزيع الطالبات اليومي")
@@ -261,6 +308,7 @@ elif page == "📅 التوزيع اليومي":
                     save_json(ASSIGNMENTS_FILE, assignments)
                 st.rerun()
 
+
 elif page == "💰 حالة الدفع":
     st.header("متابعة حالة الدفع")
 
@@ -286,4 +334,4 @@ elif page == "💰 حالة الدفع":
             st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("تطبيق نقل الطالبات – خالد القباطي © 2026")
+st.sidebar.caption("الخالد للنقل © 2026")
