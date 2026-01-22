@@ -18,26 +18,34 @@ def load_data():
 # تحميل البيانات
 load_data()
 
-# --- الصفحة الرئيسية ---
+# --- إعداد الصفحة ---
 st.set_page_config(page_title="التطبيق", layout="wide")
 st.title("الصفحة الرئيسية")
 st.write("هذه الصفحة الرئيسية للتطبيق")
 
-# القائمة الجانبية
+# --- القائمة الجانبية ---
 with st.sidebar:
     st.header("القائمة الرئيسية")
     st.write("اختر الصفحة من هنا:")
     st.write("- الصفحة الرئيسية")
     st.write("- لوحة التحكم")
 
-# --- عرض وتعديل بيانات الطالبات ---
-st.subheader("قائمة الطالبات")
-edited_df = st.data_editor(
-    st.session_state.students_db,
-    use_container_width=True,
-    num_rows="dynamic"
-)
+# --- عرض الجداول في أعمدة ---
+col1, col2 = st.columns(1)  # نستخدم عمود واحد كامل لكل جدول على الهاتف
 
-if st.button("حفظ التعديلات"):
-    st.session_state.students_db = edited_df
-    st.success("تم تحديث حالة الدفع!")
+# جدول الطالبات مع إمكانية تعديل
+with col1:
+    st.subheader("قائمة الطالبات")
+    edited_df = st.data_editor(
+        st.session_state.students_db,
+        use_container_width=True,
+        num_rows="dynamic"
+    )
+    if st.button("حفظ تعديلات الطالبات"):
+        st.session_state.students_db = edited_df
+        st.success("تم تحديث حالة الدفع!")
+
+# جدول السائقين للعرض فقط
+with col2:
+    st.subheader("قائمة السائقين")
+    st.dataframe(st.session_state.buses_db, use_container_width=True)
