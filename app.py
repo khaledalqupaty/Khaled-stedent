@@ -23,17 +23,21 @@ st.set_page_config(page_title="التطبيق", layout="wide")
 st.title("الصفحة الرئيسية")
 st.write("هذه الصفحة الرئيسية للتطبيق")
 
-# عرض بيانات الطالبات
-st.subheader("قائمة الطالبات")
-st.dataframe(st.session_state.students_db)
-
-# عرض بيانات السائقين
-st.subheader("قائمة السائقين")
-st.dataframe(st.session_state.buses_db)
-
 # القائمة الجانبية
 with st.sidebar:
     st.header("القائمة الرئيسية")
     st.write("اختر الصفحة من هنا:")
     st.write("- الصفحة الرئيسية")
     st.write("- لوحة التحكم")
+
+# --- عرض وتعديل بيانات الطالبات ---
+st.subheader("قائمة الطالبات")
+edited_df = st.data_editor(
+    st.session_state.students_db,
+    use_container_width=True,
+    num_rows="dynamic"
+)
+
+if st.button("حفظ التعديلات"):
+    st.session_state.students_db = edited_df
+    st.success("تم تحديث حالة الدفع!")
