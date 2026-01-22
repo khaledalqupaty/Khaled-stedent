@@ -1,12 +1,25 @@
 import streamlit as st
-from data.mock_data import load_data  # تأكد أن المسار صحيح
+import pandas as pd
 
-st.set_page_config(page_title="التطبيق", layout="wide")
+# --- بيانات تجريبية ---
+def load_data():
+    if 'students_db' not in st.session_state:
+        st.session_state.students_db = pd.DataFrame([
+            {"الاسم": "نورة", "الموقع": "حي الروضة", "حالة الدفع": "انتظار", "رقم التواصل": "050xxx"},
+            {"الاسم": "سارة", "الموقع": "حي الملقا", "حالة الدفع": "تم الدفع", "رقم التواصل": "055xxx"}
+        ])
+
+    if 'buses_db' not in st.session_state:
+        st.session_state.buses_db = pd.DataFrame([
+            {"اسم السائق": "أحمد", "رقم الجوال": "059xxx"},
+            {"اسم السائق": "محمد", "رقم الجوال": "058xxx"}
+        ])
 
 # تحميل البيانات
 load_data()
 
-# الصفحة الرئيسية
+# --- الصفحة الرئيسية ---
+st.set_page_config(page_title="التطبيق", layout="wide")
 st.title("الصفحة الرئيسية")
 st.write("هذه الصفحة الرئيسية للتطبيق")
 
