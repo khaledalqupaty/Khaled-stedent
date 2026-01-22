@@ -1,97 +1,232 @@
 import streamlit as st
 import pandas as pd
 import urllib.parse
+import json
+import os
+from datetime import datetime
 
-# ==========================
-# إعداد البيانات التجريبية
-# ==========================
-if 'students_db' not in st.session_state:
-    st.session_state.students_db = pd.DataFrame([
-        {"الاسم": "نورة", "الموقع": "حي الروضة", "حالة الدفع": "انتظار", "رقم التواصل": "050xxx"},
-        {"الاسم": "سارة", "الموقع": "حي الملقا", "حالة الدفع": "تم الدفع", "رقم التواصل": "055xxx"}
-    ])
+# ───────────────────────────────────────────────
+#               مجلد وحفظ دائم
+# ───────────────────────────────────────────────
+DATA_FOLDER = "bus_data"
+os.makedirs(DATA_FOLDER, exist_ok=True)
 
-if 'buses_db' not in st.session_state:
-    st.session_state.buses_db = pd.DataFrame([
-        {"اسم السائق": "أحمد", "رقم الجوال": "059xxx"},
-        {"اسم السائق": "محمد", "رقم الجوال": "058xxx"}
-    ])
+STUDENTS_FILE  = os.path.join(DATA_FOLDER, "students.json")
+BUSES_FILE     = os.path.join(DATA_FOLDER, "buses.json")
+ASSIGNMENTS_FILE = os.path.join(DATA_FOLDER, "daily_assignments.json")
 
-if 'assignments' not in st.session_state:
-    st.session_state.assignments = {}
+def load_json(file_path, default=[]):
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return default
+    return default
 
-# ==========================
-# إعداد الصفحة
-# ==========================
+def save_json(file_path, data):
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# ───────────────────────────────────────────────
+#               تحميل البيانات الأولية
+# ───────────────────────────────────────────────
+default_students = [
+    {"الاسم": "نورة",  "الموقع": "حي الروضة الرياض",  "حالة الدفع": "انتظار",  "رقم ولي الأمر": "0501234567"},
+    {"الاسم": "سارة",  "الموقع": "حي الملقا الرياض",   "حالة الدفع": "تم الدفع",  "رقم ولي الأمر": "0559876543"},
+    {"الاسم": "ليان",  "الموقع": "حي النرجس الرياض",   "حالة الدفع": "انتظار",  "رقم ولي الأمر": "0581112233"},
+]
+
+default_buses = [
+    {"اسم السائق": "أحمد محمد", "رقم الباص": "باص 1", "رقم الجوال": "0591112233", "سعة الباص": 15},
+    {"اسم السائق": "خالد علي",  "رقم الباص": "باص 2", "رقم الجوال": "0584445566", "سعة الباص": 12},
+]
+
+if "students_db" not in st.session_state:
+    st.session_state.students_db = pd.DataFrame(load_json(STUDENTS_FILE, default_students))
+
+if "buses_db" not in st.session_state:
+    st.session_state.buses_db = pd.DataFrame(load_json(BUSES_FILE, default_buses))
+
+# ───────────────────────────────────────────────
+#               إعداد الصفحة
+# ───────────────────────────────────────────────
 st.set_page_config(
-    page_title="Bus Management Pro",
+    page_title="إدارة باصات المدرسة 2026",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 st.markdown("""
 <style>
-/* تحسين الخطوط والألوان */
-body { font-family: 'Arial', sans-serif; }
-h1 { color: #2F4F4F; }
-.stButton>button { background-color: #4CAF50; color: white; border-radius: 8px; }
-.stButton>button:hover { background-color: #45a049; }
+    .big-font {font-size:22px !important; font-weight:bold;}
+    .stButton > button {height:3em; width:100%; border-radius:10px; font-size:18px;}
+    .paid   {background-color:#d4edda; color:#155724; padding:8px; border-radius:6px;}
+    .pending{background-color:#f8d7da; color:#721c24;  padding:8px; border-radius:6px;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚍 تطبيق إدارة الباصات")
-st.markdown("إدارة الطالبات، السائقين والتوزيع اليومي بسهولة من الهاتف")
+st.title("🚌 إدارة باصات المدرسة – نسخة احترافية 2026")
+st.caption("نقل الطالبات يومياً بكل سهولة ومتابعة دفع وتوزيع")
 
-# ==========================
-# القائمة الجانبية
-# ==========================
+# ───────────────────────────────────────────────
+#               الشريط الجانبي
+# ───────────────────────────────────────────────
 with st.sidebar:
-    st.header("🗂 القائمة الرئيسية")
-    page = st.radio("اختر الصفحة:", ["🏠 الصفحة الرئيسية", "⚙️ لوحة التحكم"])
+    st.header("القائمة الرئيسية")
+    page = st.radio("اختر الصفحة", [
+        "🏠 الرئيسية",
+        "👧 الطالبات",
+        "🚌 السائقين والباصات",
+        "📅 التوزيع اليومي",
+        "💰 حالة الدفع"
+    ])
 
-# ==========================
-# الصفحة الرئيسية
-# ==========================
-if page == "🏠 الصفحة الرئيسية":
-    st.subheader("📋 جدول الطالبات")
-    edited_df = st.data_editor(
+# ───────────────────────────────────────────────
+#               الصفحات
+# ───────────────────────────────────────────────
+
+if page == "🏠 الرئيسية":
+    st.header("نظرة عامة اليوم")
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_ar = datetime.now().strftime("%d/%m/%Y")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("عدد الطالبات", len(st.session_state.students_db))
+    paid = len(st.session_state.students_db[st.session_state.students_db["حالة الدفع"] == "تم الدفع"])
+    col2.metric("دفعن", paid)
+    col3.metric("عدد السائقين", len(st.session_state.buses_db))
+
+    assignments = load_json(ASSIGNMENTS_FILE, {})
+    today_assign = assignments.get(today, {})
+    assigned_girls = sum(len(girls) for girls in today_assign.values())
+    col4.metric("موزعات اليوم", assigned_girls)
+
+    st.divider()
+    st.subheader("مواقع الطالبات السريعة")
+    for _, row in st.session_state.students_db.iterrows():
+        cols = st.columns([1,3,1])
+        cols[0].write(f"👧 {row['الاسم']}")
+        cols[1].write(row["الموقع"])
+        url = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(row["الموقع"])
+        cols[2].link_button("🗺 فتح", url, use_container_width=True)
+
+
+elif page == "👧 الطالبات":
+    st.header("إدارة الطالبات")
+
+    def save_students():
+        save_json(STUDENTS_FILE, st.session_state.students_db.to_dict("records"))
+
+    edited = st.data_editor(
         st.session_state.students_db,
+        num_rows="dynamic",
         use_container_width=True,
-        num_rows="dynamic"
+        key="students_editor",
+        on_change=save_students
     )
-    if st.button("💾 حفظ تعديلات الطالبات"):
-        st.session_state.students_db = edited_df
-        st.success("تم تحديث حالة الدفع!")
 
-    st.subheader("🚌 جدول السائقين")
-    st.dataframe(st.session_state.buses_db, use_container_width=True)
+    if st.button("💾 حفظ التغييرات يدوياً", type="primary"):
+        st.session_state.students_db = edited.copy()
+        save_students()
+        st.success("تم حفظ بيانات الطالبات")
+        st.rerun()
 
-    st.subheader("🚐 توزيع الطالبات على السائقين")
-    driver_name = st.selectbox("اختر السائق", st.session_state.buses_db["اسم السائق"])
-    assigned_students = st.multiselect(
-        "اختر الطالبات لهذا السائق",
-        st.session_state.students_db["الاسم"],
-        default=st.session_state.assignments.get(driver_name, [])
+
+elif page == "🚌 السائقين والباصات":
+    st.header("إدارة السائقين والباصات")
+
+    def save_buses():
+        save_json(BUSES_FILE, st.session_state.buses_db.to_dict("records"))
+
+    edited_buses = st.data_editor(
+        st.session_state.buses_db,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="buses_editor",
+        on_change=save_buses
     )
-    if st.button(f"✅ اعتماد التوزيع لـ {driver_name}"):
-        st.session_state.assignments[driver_name] = assigned_students
-        st.success(f"تم تثبيت قائمة الطالبات لـ {driver_name}")
 
-    st.subheader("📊 ملخص التوزيع الحالي")
-    for driver, names in st.session_state.assignments.items():
-        if names:
-            st.text(f"🚐 {driver}: {', '.join(names)}")
+    if st.button("💾 حفظ بيانات السائقين", type="primary"):
+        st.session_state.buses_db = edited_buses.copy()
+        save_buses()
+        st.success("تم الحفظ")
+        st.rerun()
 
-    st.subheader("📍 مواقع الطالبات")
-    for _, student in st.session_state.students_db.iterrows():
-        st.write(f"👩 {student['الاسم']}")
-        if st.button(f"🗺 فتح موقع {student['الاسم']}", key=student['الاسم']):
-            url = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(student["الموقع"])
-            st.markdown(f"[اضغط هنا للانتقال إلى الخريطة]({url})")
 
-# ==========================
-# لوحة التحكم (للمستقبل)
-# ==========================
-else:
-    st.subheader("⚙️ لوحة التحكم")
-    st.write("هنا يمكن إضافة مزيد من الأدوات المستقبلية، مثل تقارير الدفع، تنبيهات السائقين، وإحصائيات الرحلات.")
+elif page == "📅 التوزيع اليومي":
+    st.header("توزيع الطالبات اليومي")
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_ar = datetime.now().strftime("%d/%m/%Y")
+    st.subheader(f"التوزيع ليوم: {today_ar}")
+
+    assignments = load_json(ASSIGNMENTS_FILE, {})
+
+    for driver in st.session_state.buses_db["اسم السائق"]:
+        with st.expander(f"🚌 {driver} – {st.session_state.buses_db[st.session_state.buses_db['اسم السائق']==driver]['رقم الباص'].values[0]}", expanded=True):
+            current_girls = assignments.get(today, {}).get(driver, [])
+            selected = st.multiselect(
+                "اختر الطالبات",
+                options=st.session_state.students_db["الاسم"].tolist(),
+                default=current_girls,
+                key=f"select_{driver}_{today}"
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(f"حفظ توزيع {driver}", key=f"save_{driver}", type="primary"):
+                    if today not in assignments:
+                        assignments[today] = {}
+                    assignments[today][driver] = selected
+                    save_json(ASSIGNMENTS_FILE, assignments)
+                    st.success(f"تم حفظ توزيع {driver}")
+                    st.rerun()
+
+            with col2:
+                if st.button(f"مسح التوزيع", key=f"clear_{driver}"):
+                    if today in assignments and driver in assignments[today]:
+                        del assignments[today][driver]
+                        if not assignments[today]:
+                            del assignments[today]
+                    save_json(ASSIGNMENTS_FILE, assignments)
+                    st.warning(f"تم مسح توزيع {driver}")
+                    st.rerun()
+
+    st.divider()
+    st.subheader("ملخص التوزيع اليوم")
+    today_assign = assignments.get(today, {})
+    if today_assign:
+        for driver, girls in today_assign.items():
+            if girls:
+                st.success(f"🚌 {driver} → {', '.join(girls)}")
+    else:
+        st.info("لم يتم توزيع أي طالبات بعد لهذا اليوم")
+
+
+elif page == "💰 حالة الدفع":
+    st.header("متابعة حالة الدفع")
+
+    status_filter = st.selectbox("فلتر حسب الحالة", ["الكل", "تم الدفع", "انتظار"])
+
+    df = st.session_state.students_db.copy()
+    if status_filter != "الكل":
+        df = df[df["حالة الدفع"] == status_filter]
+
+    for idx, row in df.iterrows():
+        with st.container(border=True):
+            cols = st.columns([2, 3, 2, 2])
+            cols[0].write(f"**{row['الاسم']}**")
+            cols[1].write(row["الموقع"])
+
+            status_class = "paid" if row["حالة الدفع"] == "تم الدفع" else "pending"
+            cols[2].markdown(f"<div class='{status_class}'>{row['حالة الدفع']}</div>", unsafe_allow_html=True)
+
+            new_status = "تم الدفع" if row["حالة الدفع"] == "انتظار" else "انتظار"
+            if cols[3].button("تبديل", key=f"toggle_{idx}", use_container_width=True):
+                st.session_state.students_db.loc[idx, "حالة الدفع"] = new_status
+                save_json(STUDENTS_FILE, st.session_state.students_db.to_dict("records"))
+                st.success("تم تحديث الحالة")
+                st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.caption(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
