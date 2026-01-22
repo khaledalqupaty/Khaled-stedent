@@ -14,10 +14,11 @@ if 'buses_db' not in st.session_state:
         {"اسم السائق": "محمد", "رقم الجوال": "058xxx"}
     ])
 
+if 'assignments' not in st.session_state:
+    st.session_state.assignments = {}  # لتخزين توزيع الطالبات لكل سائق
+
 # --- إعداد الصفحة ---
 st.set_page_config(page_title="التطبيق", layout="wide")
-
-# --- الصفحة الرئيسية ---
 st.title("الصفحة الرئيسية")
 st.write("هذه الصفحة الرئيسية للتطبيق")
 
@@ -39,6 +40,20 @@ if st.button("حفظ تعديلات الطالبات"):
     st.session_state.students_db = edited_df
     st.success("تم تحديث حالة الدفع!")
 
-# --- جدول السائقين للعرض فقط ---
-st.subheader("قائمة السائقين")
-st.dataframe(st.session_state.buses_db, use_container_width=True)
+# --- تعيين الطالبات لكل سائق ---
+st.subheader("توزيع الطالبات على السائقين")
+driver_name = st.selectbox("اختر السائق", st.session_state.buses_db["اسم السائق"])
+assigned_students = st.multiselect(
+    "اختر الطالبات لهذا السائق",
+    st.session_state.students_db["الاسم"],
+    default=st.session_state.assignments.get(driver_name, [])
+)
+if st.button(f"اعتماد التوزيع لـ {driver_name}"):
+    st.session_state.assignments[driver_name] = assigned_students
+    st.success(f"تم تثبيت قائمة الطالبات لـ {driver_name}")
+
+# --- عرض توزيع الحالي ---
+st.subheader("ملخص التوزيع الحالي")
+for driver, names in st.session_state.assignments.items():
+    if names:
+        st.text(f"🚐 {driver}: {', '.join(names)}")
