@@ -49,7 +49,7 @@ if "buses_db" not in st.session_state:
     st.session_state.buses_db = pd.DataFrame(load_json(BUSES_FILE, default_buses))
 
 # ==========================
-# إعداد الصفحة الرئيسية
+# إعداد الصفحة
 # ==========================
 st.set_page_config(
     page_title="إدارة باصات المدرسة 2026",
@@ -58,28 +58,36 @@ st.set_page_config(
 )
 
 # ==========================
-# ستايل احترافي
+# ستايل احترافي (ألوان، خلفيات، أزرار)
 # ==========================
 st.markdown("""
 <style>
-/* الخطوط الأساسية */
-body { font-family: 'Arial', sans-serif; }
-h1, h2, h3 { color: #1F4E79; }
+/* الخطوط والألوان */
+body { font-family: 'Arial', sans-serif; background-color:#f7f9fc; }
+h1, h2, h3 { color: #1F4E79; font-weight:bold; }
+.stMarkdown h1 { color:#1F4E79; }
 
 /* الأزرار */
 .stButton>button { 
-    background-color: #4CAF50; color: white; height:3em; width:100%; border-radius:8px; font-size:18px; 
+    background-color: #1F77B4; color: white; height:3em; width:100%; border-radius:10px; font-size:18px; font-weight:bold;
+    box-shadow: 1px 1px 5px rgba(0,0,0,0.2);
 }
-.stButton>button:hover { background-color:#45a049; }
+.stButton>button:hover { background-color:#0f5c91; }
 
 /* حالة الدفع */
-.paid   {background-color:#d4edda; color:#155724; padding:6px; border-radius:6px; text-align:center;}
-.pending{background-color:#f8d7da; color:#721c24; padding:6px; border-radius:6px; text-align:center;}
+.paid   {background-color:#d4edda; color:#155724; padding:6px; border-radius:6px; text-align:center; font-weight:bold;}
+.pending{background-color:#f8d7da; color:#721c24; padding:6px; border-radius:6px; text-align:center; font-weight:bold;}
+
+/* تمييز الجداول */
+[data-testid="stDataFrame"] {border-radius:10px; box-shadow: 1px 1px 5px rgba(0,0,0,0.1);}
+
+/* Sidebar */
+[data-testid="stSidebar"] {background-color:#e1f0ff; border-radius:10px; padding:15px;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚌 إدارة باصات المدرسة – نسخة مطورة")
-st.caption("نسخة احترافية مع Dashboard وألوان جذابة")
+st.title("🚌 إدارة باصات المدرسة – نسخة احترافية")
+st.caption("نسخة حديثة مع ألوان جذابة وأزرار واضحة")
 
 # ==========================
 # الشريط الجانبي
@@ -198,7 +206,7 @@ elif page == "📅 التوزيع اليومي":
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button(f"حفظ توزيع {driver}", key=f"save_{driver}", type="primary"):
+                if st.button(f"💾 حفظ توزيع {driver}", key=f"save_{driver}", type="primary"):
                     if today not in assignments:
                         assignments[today] = {}
                     assignments[today][driver] = selected
@@ -207,7 +215,7 @@ elif page == "📅 التوزيع اليومي":
                     st.rerun()
 
             with col2:
-                if st.button(f"مسح التوزيع", key=f"clear_{driver}"):
+                if st.button(f"🗑 مسح التوزيع", key=f"clear_{driver}"):
                     if today in assignments and driver in assignments[today]:
                         del assignments[today][driver]
                         if not assignments[today]:
@@ -236,7 +244,7 @@ elif page == "💰 حالة الدفع":
         cols[2].markdown(f"<div class='{status_class}'>{row['حالة الدفع']}</div>", unsafe_allow_html=True)
 
         new_status = "تم الدفع" if row["حالة الدفع"]=="انتظار" else "انتظار"
-        if cols[3].button("تبديل", key=f"toggle_{idx}", use_container_width=True):
+        if cols[3].button("🔄 تبديل", key=f"toggle_{idx}", use_container_width=True):
             st.session_state.students_db.loc[idx, "حالة الدفع"] = new_status
             save_json(STUDENTS_FILE, st.session_state.students_db.to_dict("records"))
             st.success("تم تحديث الحالة")
