@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import urllib.parse
 
 # --- بيانات تجريبية ---
 if 'students_db' not in st.session_state:
@@ -15,17 +16,15 @@ if 'buses_db' not in st.session_state:
     ])
 
 if 'assignments' not in st.session_state:
-    st.session_state.assignments = {}  # لتخزين توزيع الطالبات لكل سائق
+    st.session_state.assignments = {}
 
 # --- إعداد الصفحة ---
-st.set_page_config(page_title="التطبيق", layout="wide")
-st.title("الصفحة الرئيسية")
-st.write("هذه الصفحة الرئيسية للتطبيق")
+st.set_page_config(page_title="Bus Management Pro", layout="wide")
+st.title("التطبيق اليومي لإدارة الباصات")
 
 # --- القائمة الجانبية ---
 with st.sidebar:
     st.header("القائمة الرئيسية")
-    st.write("اختر الصفحة من هنا:")
     st.write("- الصفحة الرئيسية")
     st.write("- لوحة التحكم")
 
@@ -39,6 +38,10 @@ edited_df = st.data_editor(
 if st.button("حفظ تعديلات الطالبات"):
     st.session_state.students_db = edited_df
     st.success("تم تحديث حالة الدفع!")
+
+# --- جدول السائقين للعرض فقط ---
+st.subheader("قائمة السائقين")
+st.dataframe(st.session_state.buses_db, use_container_width=True)
 
 # --- تعيين الطالبات لكل سائق ---
 st.subheader("توزيع الطالبات على السائقين")
@@ -57,3 +60,11 @@ st.subheader("ملخص التوزيع الحالي")
 for driver, names in st.session_state.assignments.items():
     if names:
         st.text(f"🚐 {driver}: {', '.join(names)}")
+
+# --- فتح موقع الطالبات على Google Maps ---
+st.subheader("مواقع الطالبات")
+for _, student in st.session_state.students_db.iterrows():
+    st.write(f"📍 {student['الاسم']}")
+    if st.button(f"فتح موقع {student['الاسم']}", key=student['الاسم']):
+        url = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(student["الموقع"])
+        st.markdown(f"[اضغط هنا للانتقال إلى الخريطة]({url})")
