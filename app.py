@@ -15,20 +15,35 @@ STUDENTS_FILE    = os.path.join(DATA_FOLDER, "students.json")
 BUSES_FILE       = os.path.join(DATA_FOLDER, "buses.json")
 ASSIGNMENTS_FILE = os.path.join(DATA_FOLDER, "daily_assignments.json")
 
+def load_json(path, default=[]):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return default
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
 def load_students():
-    return pd.DataFrame(load_json(STUDENTS_FILE, [
+    data = load_json(STUDENTS_FILE, [
         {"الاسم": "نورة",  "رقم الطالبة": "101", "الموقع": "حي الروضة الرياض",  "حالة الدفع": "انتظار", "رقم ولي الأمر": "0501234567"},
         {"الاسم": "سارة",  "رقم الطالبة": "102", "الموقع": "حي الملقا الرياض",   "حالة الدفع": "تم الدفع", "رقم ولي الأمر": "0559876543"},
         {"الاسم": "ليان",  "رقم الطالبة": "103", "الموقع": "حي النرجس الرياض",   "حالة الدفع": "انتظار", "رقم ولي الأمر": "0581112233"},
-    ]))
+    ])
+    return pd.DataFrame(data)
 
 def load_buses():
-    return pd.DataFrame(load_json(BUSES_FILE, [
+    data = load_json(BUSES_FILE, [
         {"اسم السائق": "أحمد محمد", "رقم الباص": "باص 1", "رقم الجوال": "0591112233", "سعة الباص": 15},
         {"اسم السائق": "خالد علي",  "رقم الباص": "باص 2", "رقم الجوال": "0584445566", "سعة الباص": 12},
-    ]))
+    ])
+    return pd.DataFrame(data)
 
-# تحميل أول مرة فقط إذا ما كان موجود
+# تحميل البيانات في session_state (فقط مرة واحدة أو عند إعادة التحميل)
 if "students_db" not in st.session_state:
     st.session_state.students_db = load_students()
 
@@ -36,16 +51,7 @@ if "buses_db" not in st.session_state:
     st.session_state.buses_db = load_buses()
 
 # ───────────────────────────────────────────────
-# دوال مساعدة لإعادة التحميل بعد الحفظ
-# ───────────────────────────────────────────────
-def reload_students():
-    st.session_state.students_db = load_students()
-
-def reload_buses():
-    st.session_state.buses_db = load_buses()
-
-# ───────────────────────────────────────────────
-# إعداد الصفحة + ستايل (نفس السابق مع تحسينات بسيطة)
+# إعداد الصفحة + ستايل احترافي
 # ───────────────────────────────────────────────
 st.set_page_config(page_title="الخالد للنقل", layout="wide", initial_sidebar_state="expanded")
 
@@ -112,7 +118,7 @@ for date_data in assignments.values():
 
 st.session_state.students_db["أيام الدوام"] = st.session_state.students_db["الاسم"].map(attendance).fillna(0).astype(int)
 
-# ─── الصفحات مع حفظ تلقائي + إعادة تحميل ────────────────────────────
+# ─── الصفحات مع حفظ تلقائي + إعادة تحميل فوري ──────────────────────
 
 if page == "🏠 Dashboard":
     st.header("نظرة عامة اليوم")
@@ -137,8 +143,9 @@ elif page == "👧 الطالبات":
 
     def auto_save_students():
         save_json(STUDENTS_FILE, st.session_state.students_db.to_dict("records"))
-        # إعادة تحميل البيانات للتأكد من التحديث
+        # إعادة تحميل البيانات فوراً للتأكد من التحديث
         st.session_state.students_db = load_students()
+        st.rerun()
 
     def map_link(loc):
         if pd.isna(loc) or not loc.strip(): return ""
@@ -166,6 +173,7 @@ elif page == "🚌 السائقين":
     def auto_save_buses():
         save_json(BUSES_FILE, st.session_state.buses_db.to_dict("records"))
         st.session_state.buses_db = load_buses()
+        st.rerun()
 
     st.data_editor(
         st.session_state.buses_db,
