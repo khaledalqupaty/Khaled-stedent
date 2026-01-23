@@ -15,43 +15,39 @@ STUDENTS_FILE    = os.path.join(DATA_FOLDER, "students.json")
 BUSES_FILE       = os.path.join(DATA_FOLDER, "buses.json")
 ASSIGNMENTS_FILE = os.path.join(DATA_FOLDER, "daily_assignments.json")
 
-def load_json(path, default=[]):
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            pass
-    return default
-
-def save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-# ───────────────────────────────────────────────
-# البيانات الافتراضية
-# ───────────────────────────────────────────────
-if "students_db" not in st.session_state:
-    st.session_state.students_db = pd.DataFrame(load_json(STUDENTS_FILE, [
+def load_students():
+    return pd.DataFrame(load_json(STUDENTS_FILE, [
         {"الاسم": "نورة",  "رقم الطالبة": "101", "الموقع": "حي الروضة الرياض",  "حالة الدفع": "انتظار", "رقم ولي الأمر": "0501234567"},
         {"الاسم": "سارة",  "رقم الطالبة": "102", "الموقع": "حي الملقا الرياض",   "حالة الدفع": "تم الدفع", "رقم ولي الأمر": "0559876543"},
         {"الاسم": "ليان",  "رقم الطالبة": "103", "الموقع": "حي النرجس الرياض",   "حالة الدفع": "انتظار", "رقم ولي الأمر": "0581112233"},
     ]))
 
-if "buses_db" not in st.session_state:
-    st.session_state.buses_db = pd.DataFrame(load_json(BUSES_FILE, [
+def load_buses():
+    return pd.DataFrame(load_json(BUSES_FILE, [
         {"اسم السائق": "أحمد محمد", "رقم الباص": "باص 1", "رقم الجوال": "0591112233", "سعة الباص": 15},
         {"اسم السائق": "خالد علي",  "رقم الباص": "باص 2", "رقم الجوال": "0584445566", "سعة الباص": 12},
     ]))
 
+# تحميل أول مرة فقط إذا ما كان موجود
+if "students_db" not in st.session_state:
+    st.session_state.students_db = load_students()
+
+if "buses_db" not in st.session_state:
+    st.session_state.buses_db = load_buses()
+
 # ───────────────────────────────────────────────
-# إعداد الصفحة + ستايل احترافي
+# دوال مساعدة لإعادة التحميل بعد الحفظ
 # ───────────────────────────────────────────────
-st.set_page_config(
-    page_title="الخالد للنقل - إدارة النقل",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+def reload_students():
+    st.session_state.students_db = load_students()
+
+def reload_buses():
+    st.session_state.buses_db = load_buses()
+
+# ───────────────────────────────────────────────
+# إعداد الصفحة + ستايل (نفس السابق مع تحسينات بسيطة)
+# ───────────────────────────────────────────────
+st.set_page_config(page_title="الخالد للنقل", layout="wide", initial_sidebar_state="expanded")
 
 LOGO_URL = "https://drive.google.com/uc?id=1WxVKMdn81Fmb8PQFUtR8avlMkhkHhDJX"
 
@@ -67,133 +63,36 @@ st.markdown("""
         --text: #0d1b2a;
         --gray: #546e7a;
     }
-
-    .stApp {
-        background: var(--bg);
-        color: var(--text);
-    }
-
-    h1, h2, h3 {
-        color: var(--primary) !important;
-        font-weight: 700;
-    }
-
-    .header {
-        display: flex;
-        align-items: center;
-        gap: 1.5rem;
-        padding: 1.2rem 0 1.8rem;
-        border-bottom: 2px solid #e3f2fd;
-        margin-bottom: 2rem;
-    }
-
-    .stButton > button {
-        background: var(--primary);
-        color: white !important;
-        border: none;
-        border-radius: 8px;
-        padding: 0.65rem 1.4rem;
-        font-weight: 600;
-        box-shadow: 0 3px 10px rgba(13,71,161,0.18);
-        transition: all 0.22s;
-    }
-
-    .stButton > button:hover {
-        background: var(--primary-light);
-        transform: translateY(-1px);
-        box-shadow: 0 6px 16px rgba(13,71,161,0.28);
-    }
-
-    .metric-card {
-        background: var(--card);
-        border-radius: 12px;
-        padding: 1.3rem;
-        text-align: center;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.05);
-        border: 1px solid #e3f2fd;
-    }
-
-    .paid   { background:#e8f5e9; color:var(--success); padding:0.45rem 1rem; border-radius:999px; font-weight:600; }
-    .pending{ background:#ffebee; color:var(--danger);  padding:0.45rem 1rem; border-radius:999px; font-weight:600; }
-
-    /* إصلاح نصوص الـ multiselect + data-editor + selectbox */
-    .stMultiSelect [data-baseweb] span,
-    .stMultiSelect [data-baseweb] div,
-    .stDataEditor [role="gridcell"] > div,
-    .stSelectbox [data-baseweb] span,
-    .stSelectbox [data-baseweb] div {
-        color: var(--text) !important;
-        -webkit-text-fill-color: var(--text) !important;
-    }
-
-    [data-baseweb="popover"] ul,
-    [data-baseweb="option"] {
-        background: white !important;
-        color: #0d1b2a !important;
-    }
-
-    [data-baseweb="option"]:hover {
-        background: #e3f2fd !important;
-    }
-
-    /* القائمة الجانبية - ألوان أفضل وأوضح */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0d47a1 0%, #1565c0 100%) !important;
-        color: white !important;
-        border-right: 1px solid #0b3d8d;
-    }
-
-    [data-testid="stSidebar"] .stRadio > div > label {
-        color: white !important;
-        font-weight: 500;
-        padding: 0.8rem 1rem;
-        border-radius: 8px;
-        transition: all 0.2s;
-    }
-
-    [data-testid="stSidebar"] .stRadio > div > label:hover {
-        background: rgba(255,255,255,0.15);
-    }
-
-    [data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
-        background: rgba(255,255,255,0.25);
-        font-weight: bold;
-    }
-
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] div,
-    [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] h1,
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3 {
-        color: white !important;
-    }
-
-    [data-testid="stSidebar"] hr {
-        background: rgba(255,255,255,0.2) !important;
-    }
-
-    [data-testid="stSidebar"] .stCaption {
-        color: rgba(255,255,255,0.7) !important;
-    }
+    .stApp { background: var(--bg); color: var(--text); }
+    h1, h2, h3 { color: var(--primary) !important; }
+    .stButton > button { background: var(--primary); color: white !important; border-radius: 8px; padding: 0.6rem 1.3rem; font-weight: 600; box-shadow: 0 3px 10px rgba(13,71,161,0.2); }
+    .stButton > button:hover { background: var(--primary-light); box-shadow: 0 6px 15px rgba(13,71,161,0.3); }
+    .metric-card { background: var(--card); border-radius: 10px; padding: 1.2rem; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e3f2fd; }
+    .paid   {background:#e8f5e9; color:var(--success); padding:0.5rem 1rem; border-radius:999px;}
+    .pending{background:#ffebee; color:var(--danger);  padding:0.5rem 1rem; border-radius:999px;}
+    .stMultiSelect div, .stDataEditor div, .stSelectbox div { color: var(--text) !important; }
+    [data-baseweb="option"], [data-baseweb="select"] span { color: #111 !important; }
+    [data-testid="stSidebar"] { background: linear-gradient(to bottom, #0d47a1 0%, #1565c0 100%) !important; color: white !important; }
+    [data-testid="stSidebar"] .stRadio > div > label { color: white !important; padding: 0.8rem 1rem; border-radius: 8px; }
+    [data-testid="stSidebar"] .stRadio > div > label:hover { background: rgba(255,255,255,0.15); }
+    [data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] { background: rgba(255,255,255,0.25); font-weight: bold; }
+    [data-testid="stSidebar"] p, [data-testid="stSidebar"] div, [data-testid="stSidebar"] span { color: white !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── الهيدر الرئيسي ────────────────────────────────────────────────────
-st.markdown('<div class="header">', unsafe_allow_html=True)
-col1, col2 = st.columns([1, 6])
-with col1:
+# Header
+col_logo, col_text = st.columns([1, 6])
+with col_logo:
     st.image(LOGO_URL, width=90)
-with col2:
-    st.markdown("<h1 style='margin:0 0 0.3rem 0;'>الخالد للنقل</h1>", unsafe_allow_html=True)
-    st.markdown("<div style='color:var(--gray); font-size:1.05rem;'>نقل طالبات آمن ومريح – الرياض</div>", unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+with col_text:
+    st.title("الخالد للنقل")
+    st.caption("نقل طالبات آمن ومريح – الرياض")
 
-# ─── السايدبار ─────────────────────────────────────────────────────────
+# Sidebar
 with st.sidebar:
-    st.image(LOGO_URL, width=160)
-    st.markdown("### الخالد للنقل")
-    page = st.radio("التنقل", [
+    st.image(LOGO_URL, width=140)
+    st.header("الخالد للنقل")
+    page = st.radio("", [
         "🏠 Dashboard",
         "👧 الطالبات",
         "🚌 السائقين",
@@ -201,7 +100,7 @@ with st.sidebar:
         "💰 حالة الدفع"
     ], label_visibility="collapsed")
     st.divider()
-    st.caption(f"آخر تحديث • {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    st.caption(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 # ─── حساب أيام الدوام تلقائياً ────────────────────────────────────────
 assignments = load_json(ASSIGNMENTS_FILE, {})
@@ -213,7 +112,7 @@ for date_data in assignments.values():
 
 st.session_state.students_db["أيام الدوام"] = st.session_state.students_db["الاسم"].map(attendance).fillna(0).astype(int)
 
-# ─── الصفحات ──────────────────────────────────────────────────────────
+# ─── الصفحات مع حفظ تلقائي + إعادة تحميل ────────────────────────────
 
 if page == "🏠 Dashboard":
     st.header("نظرة عامة اليوم")
@@ -238,6 +137,8 @@ elif page == "👧 الطالبات":
 
     def auto_save_students():
         save_json(STUDENTS_FILE, st.session_state.students_db.to_dict("records"))
+        # إعادة تحميل البيانات للتأكد من التحديث
+        st.session_state.students_db = load_students()
 
     def map_link(loc):
         if pd.isna(loc) or not loc.strip(): return ""
@@ -257,13 +158,14 @@ elif page == "👧 الطالبات":
             "أيام الدوام": st.column_config.NumberColumn(disabled=True)
         }
     )
-    st.caption("الحفظ تلقائي عند التعديل")
+    st.caption("يتم الحفظ تلقائياً بعد كل تعديل")
 
 elif page == "🚌 السائقين":
     st.header("إدارة السائقين والباصات")
 
     def auto_save_buses():
         save_json(BUSES_FILE, st.session_state.buses_db.to_dict("records"))
+        st.session_state.buses_db = load_buses()
 
     st.data_editor(
         st.session_state.buses_db,
@@ -272,7 +174,7 @@ elif page == "🚌 السائقين":
         key="buses_ed",
         on_change=auto_save_buses
     )
-    st.caption("الحفظ تلقائي")
+    st.caption("يتم الحفظ تلقائياً")
 
 elif page == "📅 التوزيع اليومي":
     st.header("توزيع الطالبات اليومي")
