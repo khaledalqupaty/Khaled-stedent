@@ -1,15 +1,25 @@
-import streamlit as st
-import pandas as pd
+# mock_data.py
+# يمكن تشغيله مرة واحدة لملء بيانات اضافية
 
-def load_data():
-    if 'students_db' not in st.session_state:
-        st.session_state.students_db = pd.DataFrame([
-            {"الاسم": "نورة", "الموقع": "حي الروضة", "حالة الدفع": "انتظار", "رقم التواصل": "050xxx"},
-            {"الاسم": "سارة", "الموقع": "حي الملقا", "حالة الدفع": "تم الدفع", "رقم التواصل": "055xxx"}
-        ])
+import sqlite3, pathlib
 
-    if 'buses_db' not in st.session_state:
-        st.session_state.buses_db = pd.DataFrame([
-            {"اسم السائق": "أحمد", "رقم الجوال": "059xxx"},
-            {"اسم السائق": "محمد", "رقم الجوال": "058xxx"}
-        ])
+DB_FILE = pathlib.Path("bus_data/db.sqlite")
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+
+# طالبات إضافية
+students_add = [
+    ("ريم","104","حي الياسمين","0566666666","انتظار"),
+    ("نورا","105","حي الربيع","0577777777","تم الدفع"),
+    ("جوري","106","حي النخيل","0588888888","انتظار"),
+]
+
+# سائقون إضافيون
+drivers_add = [
+    ("فهد خالد","باص 3","0555555555",18),
+    ("سعيد أحمد","باص 4","0544444444",16),
+]
+
+conn.executemany("INSERT OR IGNORE INTO students(name,sid,loc,phone,status) VALUES(?,?,?,?,?)", students_add)
+conn.executemany("INSERT OR IGNORE INTO drivers(name,bus_no,phone,capacity) VALUES(?,?,?,?)", drivers_add)
+conn.commit()
+print("✅ تمت إضافة البيانات الإضافية")
