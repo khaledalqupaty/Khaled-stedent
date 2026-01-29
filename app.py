@@ -1,18 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-الخالد للنقل – الإصدار النهائي (يعمل على الجوال واللابتوب)
+الخالد للنقل – مع تصدير PDF يدعم العربية (DejaVu)
 """
 import streamlit as st
 import pandas as pd
-import sqlite3, pathlib, datetime, io
+import sqlite3, pathlib, datetime, io, urllib.request, zipfile, os
 import folium
-from streamlit.components.v1 import html
 from fpdf import FPDF
 
-# إعداد الصفحة
 st.set_page_config(page_title="الخالد للنقل", layout="wide")
 
-# ستايل احترافي
+# ستايل سابق (نفسه)
 st.markdown("""
 <style>
 :root{--primary:#0d47a1;--success:#2e7d32;--danger:#c62828;--bg:#f9fcff;--card:#ffffff;--text:#0d1b2a;}
@@ -29,7 +27,18 @@ h1,h2,h3{color:var(--primary)!important;text-align:right;}
 </style>
 """, unsafe_allow_html=True)
 
-# تهيئة قاعدة البيانات
+# -------------------- تحميل خط DejaVu (يدعم العربية) --------------------
+def get_dejavu():
+    """تحميل خط DejaVu مرة واحدة فقط"""
+    font_dir = pathlib.Path("fonts")
+    font_dir.mkdir(exist_ok=True)
+    font_path = font_dir / "DejaVuSansCondensed.ttf"
+    if not font_path.exists():
+        url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSansCondensed.ttf"
+        urllib.request.urlretrieve(url, font_path)
+    return str(font_path)
+
+# -------------------- قاعدة البيانات --------------------
 @st.cache_resource
 def init_db():
     DB_FILE = pathlib.Path("bus_data/db.sqlite")
@@ -58,7 +67,6 @@ def init_db():
         PRIMARY KEY(date, driver_id, student_id)
     );
     """)
-    # بيانات افتراضية
     if not conn.execute("SELECT 1 FROM students").fetchone():
         conn.executemany("INSERT INTO students(name,sid,loc,phone,status) VALUES(?,?,?,?,?)",
                          [("نورة","101","حي الروضة","0501234567","انتظار"),
@@ -73,7 +81,7 @@ def init_db():
 
 conn = init_db()
 
-# دوال CRUD
+# -------------------- دوال CRUD --------------------
 @st.cache_data(ttl=60)
 def get_students(_conn):
     return pd.read_sql("SELECT * FROM students ORDER BY name", _conn)
@@ -109,7 +117,7 @@ def set_assign(_conn, date, driver_id, student_ids):
 def attendance_days(_conn, student_id):
     return _conn.execute("SELECT COUNT(*) FROM assignments WHERE student_id=?", (student_id,)).fetchone()[0]
 
-# تصدير Excel & PDF
+# -------------------- تصدير Excel & PDF (مع خط عربي) --------------------
 def to_excel(df):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine="openpyxl") as w:
@@ -117,17 +125,21 @@ def to_excel(df):
     return out.getvalue()
 
 def to_pdf(df, title):
+    font_path = get_dejavu()
     pdf = FPDF()
     pdf.set_auto_page_break(True, 10)
     pdf.add_page()
-    pdf.set_font("Arial", size=16)
+    pdf.add_font('DejaVu', '', font_path, uni=True)
+    pdf.set_font('DejaVu', size=16)
     pdf.cell(0, 10, title, ln=True, align="C")
     pdf.ln(4)
-    pdf.set_font("Arial", size=10)
+    pdf.set_font('DejaVu', size=10)
     cols = df.columns
+    # header
     for c in cols:
-        pdf.cell(40, 8, c, border=1)
+        pdf.cell(40, 8, str(c), border=1)
     pdf.ln()
+    # data
     for _, row in df.iterrows():
         for c in cols:
             pdf.cell(40, 8, str(row[c]), border=1)
@@ -136,16 +148,16 @@ def to_pdf(df, title):
     pdf.output(byte)
     return byte.getvalue()
 
-# شريط جانبي
+# -------------------- التنقل --------------------
 today = datetime.date.today().isoformat()
 with st.sidebar:
-    st.image("https://drive.google.com/uc?id=1WxVKMdn81Fmb8PQFUtR8avlMkhkHhDJX", width=100)
+    st.image("https://drive.google.com/uc?id=1WxVKMdn81Fmb8PQFUtR8avlMkhkHhDJX", width=110)
     menu = st.radio("", ["🏠 Dashboard", "👧 إدارة الطالبات", "🚌 إدارة السائقين",
                          "📅 التوزيع اليومي", "📊 تقارير", "🗺 الخريطة"], label_visibility="collapsed")
     st.divider()
     st.caption(f"آخر تحديث: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
-# ---------- Dashboard ----------
+# -------------------- الصفحات --------------------
 if menu == "🏠 Dashboard":
     st.header("نظرة عامة")
     stu, drv = get_students(conn), get_drivers(conn)
@@ -159,7 +171,6 @@ if menu == "🏠 Dashboard":
         ch = ass.groupby("driver").size()
         st.bar_chart(ch, color="#0d47a1")
 
-# ---------- إدارة الطالبات ----------
 elif menu == "👧 إدارة الطالبات":
     st.header("إدارة الطالبات")
     df = get_students(conn)
@@ -171,7 +182,6 @@ elif menu == "👧 إدارة الطالبات":
     c1.download_button("📥 Excel", to_excel(edited), "students.xlsx")
     c2.download_button("📄 PDF", to_pdf(edited, "تقرير الطالبات"), "students.pdf")
 
-# ---------- إدارة السائقين ----------
 elif menu == "🚌 إدارة السائقين":
     st.header("إدارة السائقين")
     df = get_drivers(conn)
@@ -183,7 +193,6 @@ elif menu == "🚌 إدارة السائقين":
     c1.download_button("📥 Excel", to_excel(edited), "drivers.xlsx")
     c2.download_button("📄 PDF", to_pdf(edited, "تقرير السائقين"), "drivers.pdf")
 
-# ---------- التوزيع اليومي ----------
 elif menu == "📅 التوزيع اليومي":
     st.header(f"توزيع يوم: {today}")
     stu, drv = get_students(conn), get_drivers(conn)
@@ -200,7 +209,6 @@ elif menu == "📅 التوزيع اليومي":
                 set_assign(conn, today, d["id"], ids)
                 st.toast("تم الحفظ")
 
-# ---------- تقارير ----------
 elif menu == "📊 تقارير":
     st.header("تقارير")
     stu = get_students(conn)
@@ -210,19 +218,18 @@ elif menu == "📊 تقارير":
     c2.download_button("📄 PDF كامل", to_pdf(stu, "تقرير شامل"), "full_report.pdf")
     st.dataframe(stu, use_container_width=True)
 
-# ---------- الخريطة التفاعلية ----------
 elif menu == "🗺 الخريطة":
     st.header("مواقع الطالبات")
     stu = get_students(conn)
     if stu.empty:
         st.info("لا توجد بيانات")
         st.stop()
-    lat, lon = 24.7136, 46.6753  # الرياض
+    lat, lon = 24.7136, 46.6753
     m = folium.Map(location=[lat, lon], zoom_start=11)
     for _, r in stu.iterrows():
         if r["loc"]:
             folium.Marker(
-                location=[lat, lon],  # لاحقاً استبدل بنتائج geocode حقيقية
+                location=[lat, lon],
                 popup=f"{r['name']} ({r['sid']})",
                 tooltip=r["loc"]
             ).add_to(m)
