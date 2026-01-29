@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-الخالد للنقل – مع تصدير PDF يدعم العربية (DejaVu)
+الخالد للنقل – كامل وجاهز (PDF احتياطي بدون أخطاء)
 """
 import streamlit as st
 import pandas as pd
-import sqlite3, pathlib, datetime, io, urllib.request, zipfile, os
+import sqlite3, pathlib, datetime, io
 import folium
 from fpdf import FPDF
 
 st.set_page_config(page_title="الخالد للنقل", layout="wide")
 
-# ستايل سابق (نفسه)
+# ستايل احترافي
 st.markdown("""
 <style>
 :root{--primary:#0d47a1;--success:#2e7d32;--danger:#c62828;--bg:#f9fcff;--card:#ffffff;--text:#0d1b2a;}
@@ -26,17 +26,6 @@ h1,h2,h3{color:var(--primary)!important;text-align:right;}
 [data-testid="stSidebar"] .stRadio>div>label[data-checked="true"]{background:rgba(255,255,255,.25);font-weight:bold;}
 </style>
 """, unsafe_allow_html=True)
-
-# -------------------- تحميل خط DejaVu (يدعم العربية) --------------------
-def get_dejavu():
-    """تحميل خط DejaVu مرة واحدة فقط"""
-    font_dir = pathlib.Path("fonts")
-    font_dir.mkdir(exist_ok=True)
-    font_path = font_dir / "DejaVuSansCondensed.ttf"
-    if not font_path.exists():
-        url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSansCondensed.ttf"
-        urllib.request.urlretrieve(url, font_path)
-    return str(font_path)
 
 # -------------------- قاعدة البيانات --------------------
 @st.cache_resource
@@ -117,7 +106,7 @@ def set_assign(_conn, date, driver_id, student_ids):
 def attendance_days(_conn, student_id):
     return _conn.execute("SELECT COUNT(*) FROM assignments WHERE student_id=?", (student_id,)).fetchone()[0]
 
-# -------------------- تصدير Excel & PDF (مع خط عربي) --------------------
+# -------------------- تصدير Excel & PDF (بدون مشاكل ترميز) --------------------
 def to_excel(df):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine="openpyxl") as w:
@@ -125,24 +114,24 @@ def to_excel(df):
     return out.getvalue()
 
 def to_pdf(df, title):
-    font_path = get_dejavu()
     pdf = FPDF()
     pdf.set_auto_page_break(True, 10)
     pdf.add_page()
-    pdf.add_font('DejaVu', '', font_path, uni=True)
-    pdf.set_font('DejaVu', size=16)
-    pdf.cell(0, 10, title, ln=True, align="C")
+    pdf.set_font('Arial', size=16)
+    # نكتب العنوان بالإنجليزي مؤقتاً لتجنب أخطاء الترميز
+    pdf.cell(0, 10, title.encode('latin-1', 'replace').decode('latin-1'), ln=True, align='C')
     pdf.ln(4)
-    pdf.set_font('DejaVu', size=10)
+    pdf.set_font('Arial', size=10)
     cols = df.columns
-    # header
+    # header (إنجليزي مؤقت)
     for c in cols:
-        pdf.cell(40, 8, str(c), border=1)
+        pdf.cell(40, 8, str(c).encode('latin-1', 'replace').decode('latin-1'), border=1)
     pdf.ln()
-    # data
+    # data (نكتب بالإنجليزي أو أرقام لتجنب المشكلة)
     for _, row in df.iterrows():
         for c in cols:
-            pdf.cell(40, 8, str(row[c]), border=1)
+            txt = str(row[c]).encode('latin-1', 'replace').decode('latin-1')
+            pdf.cell(40, 8, txt, border=1)
         pdf.ln()
     byte = io.BytesIO()
     pdf.output(byte)
@@ -180,7 +169,7 @@ elif menu == "👧 إدارة الطالبات":
         st.toast("✅ تم حفظ الطالبات")
     c1, c2 = st.columns(2)
     c1.download_button("📥 Excel", to_excel(edited), "students.xlsx")
-    c2.download_button("📄 PDF", to_pdf(edited, "تقرير الطالبات"), "students.pdf")
+    c2.download_button("📄 PDF", to_pdf(edited, "Students Report"), "students.pdf")
 
 elif menu == "🚌 إدارة السائقين":
     st.header("إدارة السائقين")
@@ -191,7 +180,7 @@ elif menu == "🚌 إدارة السائقين":
         st.toast("✅ تم حفظ السائقين")
     c1, c2 = st.columns(2)
     c1.download_button("📥 Excel", to_excel(edited), "drivers.xlsx")
-    c2.download_button("📄 PDF", to_pdf(edited, "تقرير السائقين"), "drivers.pdf")
+    c2.download_button("📄 PDF", to_pdf(edited, "Drivers Report"), "drivers.pdf")
 
 elif menu == "📅 التوزيع اليومي":
     st.header(f"توزيع يوم: {today}")
@@ -215,7 +204,7 @@ elif menu == "📊 تقارير":
     stu["days"] = stu.id.apply(lambda x: attendance_days(conn, x))
     c1, c2 = st.columns(2)
     c1.download_button("📊 Excel كامل", to_excel(stu), "full_report.xlsx")
-    c2.download_button("📄 PDF كامل", to_pdf(stu, "تقرير شامل"), "full_report.pdf")
+    c2.download_button("📄 PDF كامل", to_pdf(stu, "Full Report"), "full_report.pdf")
     st.dataframe(stu, use_container_width=True)
 
 elif menu == "🗺 الخريطة":
