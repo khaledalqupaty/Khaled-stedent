@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 نظام الخالد الذكي للنقل المدرسي - الإصدار الاحترافي (Pro Edition)
-مع إضافة التوزيع اليومي - النسخة المجمعة والمصححة
+معدل: إضافة عمود أيام الدوام (يحسب اليوم مرة واحدة حتى لو ذهاب + عودة)
 """
 import streamlit as st
 import pandas as pd
@@ -26,31 +26,18 @@ st.set_page_config(
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&display=swap');
-
     :root {
-        --primary: #2563eb;
-        --secondary: #1e40af;
-        --bg: #f8fafc;
-        --card: #ffffff;
-        --text: #0f172a;
-        --success: #10b981;
-        --warning: #f59e0b;
-        --danger: #ef4444;
+        --primary: #2563eb; --secondary: #1e40af; --bg: #f8fafc; --card: #ffffff;
+        --text: #0f172a; --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
     }
-
     html, body, [class*="css"] { font-family: 'Almarai', sans-serif; }
     .stApp { background-color: var(--bg); }
-
     .kpi-card {
-        background: var(--card);
-        border-radius: 16px;
-        padding: 20px;
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-        border-right: 5px solid var(--primary);
+        background: var(--card); border-radius: 16px; padding: 20px;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border-right: 5px solid var(--primary);
         transition: transform 0.2s;
     }
     .kpi-card:hover { transform: translateY(-5px); }
-
     .kpi-title { color: #64748b; font-size: 0.9rem; font-weight: 700; margin-bottom: 5px; }
     .kpi-value { color: var(--text); font-size: 1.8rem; font-weight: 800; }
 </style>
@@ -66,14 +53,9 @@ def get_connection():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            sid TEXT UNIQUE NOT NULL,
-            phone TEXT,
-            district TEXT,
-            lat REAL,
-            lon REAL,
-            fees_total REAL DEFAULT 5000,
-            fees_paid REAL DEFAULT 0,
+            name TEXT NOT NULL, sid TEXT UNIQUE NOT NULL, phone TEXT,
+            district TEXT, lat REAL, lon REAL,
+            fees_total REAL DEFAULT 5000, fees_paid REAL DEFAULT 0,
             status TEXT DEFAULT 'نشط'
         )
     """)
@@ -81,25 +63,19 @@ def get_connection():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS drivers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            bus_no TEXT UNIQUE,
-            phone TEXT,
-            capacity INTEGER,
-            route_area TEXT
+            name TEXT NOT NULL, bus_no TEXT UNIQUE,
+            phone TEXT, capacity INTEGER, route_area TEXT
         )
     """)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS trips (
-            trip_date TEXT,
-            driver_id INTEGER,
-            student_id INTEGER,
+            trip_date TEXT, driver_id INTEGER, student_id INTEGER,
             trip_type TEXT DEFAULT 'go',
             PRIMARY KEY(trip_date, driver_id, student_id, trip_type)
         )
     """)
 
-    # بيانات تجريبية أولية
     if not cur.execute("SELECT 1 FROM students LIMIT 1").fetchone():
         students_seed = [
             ("نورة فهد", "101", "0501111111", "الملقا",   24.810, 46.610, 5000, 5000, "نشط"),
@@ -131,10 +107,10 @@ def run_query(query, params=None):
         st.cache_data.clear()
         return True
     except sqlite3.IntegrityError:
-        st.error("خطأ: قيمة مكررة (رقم الملف / رقم الباص)")
+        st.error("خطأ: قيمة مكررة (رقم الملف أو رقم الحافلة)")
         return False
     except Exception as e:
-        st.error(f"خطأ في قاعدة البيانات: {e}")
+        st.error(f"خطأ في قاعدة البيانات: {str(e)}")
         return False
 
 def get_df(query, params=None):
@@ -148,31 +124,22 @@ with st.sidebar:
 
     menu = st.radio(
         "القائمة الرئيسية",
-        [
-            "📊 لوحة القيادة",
-            "👩‍🎓 الطالبات والرسوم",
-            "🚍 السائقين والحافلات",
-            "📍 الخريطة الذكية",
-            "🗓️ التوزيع اليومي",
-            "⚙️ الإعدادات"
-        ],
+        ["📊 لوحة القيادة", "👩‍🎓 الطالبات والرسوم", "🚍 السائقين والحافلات",
+         "📍 الخريطة الذكية", "🗓️ التوزيع اليومي", "⚙️ الإعدادات"],
         label_visibility="collapsed"
     )
-
     st.markdown("---")
-    st.info("💡 نصيحة: يمكنك تصدير البيانات كـ Excel من صفحة الطالبات")
+    st.info("💡 نصيحة: عمود «أيام الدوام» يحسب كل يوم مرة واحدة فقط")
 
 # ─── 1. لوحة القيادة ────────────────────────────────────────────────────────────
 if menu == "📊 لوحة القيادة":
     st.title("📊 مركز التحكم والعمليات")
-
     df_stu = get_df("SELECT * FROM students")
     df_drv = get_df("SELECT * FROM drivers")
 
-    total_fees    = df_stu["fees_total"].sum()
-    collected     = df_stu["fees_paid"].sum()
-    pending       = total_fees - collected
-    collection_pct = (collected / total_fees * 100) if total_fees > 0 else 0
+    total = df_stu["fees_total"].sum()
+    collected = df_stu["fees_paid"].sum()
+    pending = total - collected
 
     cols = st.columns(4)
     cols[0].markdown(f'<div class="kpi-card"><div class="kpi-title">عدد الطالبات</div><div class="kpi-value">{len(df_stu)}</div></div>', unsafe_allow_html=True)
@@ -180,17 +147,7 @@ if menu == "📊 لوحة القيادة":
     cols[2].markdown(f'<div class="kpi-card" style="border-color:var(--warning)"><div class="kpi-title">المتبقي</div><div class="kpi-value">{pending:,.0f} ر.س</div></div>', unsafe_allow_html=True)
     cols[3].markdown(f'<div class="kpi-card" style="border-color:var(--secondary)"><div class="kpi-title">عدد الحافلات</div><div class="kpi-value">{len(df_drv)}</div></div>', unsafe_allow_html=True)
 
-    st.markdown("### توزيع الطالبات حسب الحي")
-    chart_data = df_stu.groupby("district").size().reset_index(name="count")
-    bar = alt.Chart(chart_data).mark_bar(cornerRadiusTopLeft=8, cornerRadiusTopRight=8).encode(
-        x=alt.X("district", sort="-y"),
-        y="count",
-        color="district",
-        tooltip=["district", "count"]
-    ).properties(height=320)
-    st.altair_chart(bar, use_container_width=True)
-
-# ─── 2. الطالبات والرسوم ───────────────────────────────────────────────────────
+# ─── 2. الطالبات والرسوم (مع إضافة أيام الدوام) ───────────────────────────────
 elif menu == "👩‍🎓 الطالبات والرسوم":
     st.title("👩‍🎓 إدارة الطالبات والرسوم")
 
@@ -234,26 +191,48 @@ elif menu == "👩‍🎓 الطالبات والرسوم":
         q += f" WHERE name LIKE '%{search}%' OR sid LIKE '%{search}%'"
 
     df = get_df(q)
-    df["المتبقي"] = df["fees_total"] - df["fees_paid"]
+
+    # ─── حساب أيام الدوام (يوم واحد حتى لو ذهاب + عودة) ─────────────────────
+    attendance = get_df("""
+        SELECT student_id, 
+               COUNT(DISTINCT trip_date) as days_count
+        FROM trips
+        GROUP BY student_id
+    """)
+
+    df = df.merge(attendance, left_on="id", right_on="student_id", how="left")
+    df["أيام الدوام"] = df["days_count"].fillna(0).astype(int)
+    df = df.drop(columns=["student_id", "days_count"], errors="ignore")
+
+    df["المتبقي"]     = df["fees_total"] - df["fees_paid"]
     df["نسبة السداد"] = (df["fees_paid"] / df["fees_total"].replace(0,1)).clip(0,1).map(lambda x: f"{x:.0%}")
 
     edited = st.data_editor(
         df,
         column_config={
             "id": None, "lat": None, "lon": None,
-            "name": "الاسم", "sid": "رقم الملف", "phone": "الجوال",
+            "name": "الاسم",
+            "sid": "رقم الملف",
+            "phone": "الجوال",
             "district": "الحي",
             "fees_paid": st.column_config.NumberColumn("المدفوع", format="%d ر.س"),
             "fees_total": st.column_config.NumberColumn("الرسوم", format="%d ر.س"),
+            "أيام الدوام": st.column_config.NumberColumn(
+                "أيام الدوام",
+                help="عدد الأيام المختلفة التي تم تسجيل الطالبة في التوزيع (ذهاب أو عودة أو كلاهما = يوم واحد)",
+                disabled=True,
+                format="%d يوم"
+            ),
             "status": st.column_config.SelectboxColumn("الحالة", options=["نشط","متوقف","خريج"]),
-            "المتبقي": None, "نسبة السداد": None
+            "المتبقي": None,
+            "نسبة السداد": None
         },
         hide_index=True,
         use_container_width=True,
         key="stu_editor"
     )
 
-    if "stu_editor" in st.session_state and st.session_state.stu_editor["edited_rows"]:
+    if "stu_editor" in st.session_state and st.session_state.stu_editor.get("edited_rows"):
         for idx, changes in st.session_state.stu_editor["edited_rows"].items():
             sid = df.iloc[idx]["id"]
             sets = ", ".join(f"{k}=?" for k in changes)
@@ -271,38 +250,93 @@ elif menu == "👩‍🎓 الطالبات والرسوم":
 
 # ─── 3. السائقين والحافلات ─────────────────────────────────────────────────────
 elif menu == "🚍 السائقين والحافلات":
-    st.title("🚍 إدارة الأسطول")
+    st.title("🚍 إدارة الأسطول والسائقين")
 
-    col1, col2 = st.columns([1,2])
+    col_form, col_list = st.columns([1, 2.5])
 
-    with col1:
+    with col_form:
+        st.subheader("إضافة سائق / حافلة جديدة")
         with st.form("add_driver"):
-            st.subheader("إضافة سائق / حافلة")
-            dname = st.text_input("اسم السائق")
-            bus   = st.text_input("رقم اللوحة")
-            cap   = st.number_input("السعة", 8, 60, 15)
-            phone = st.text_input("رقم الجوال")
-            area  = st.selectbox("المنطقة", ["شمال الرياض","وسط الرياض","شرق الرياض","غرب الرياض","جنوب الرياض"])
+            d_name  = st.text_input("اسم السائق")
+            d_bus   = st.text_input("رقم الحافلة / اللوحة")
+            d_phone = st.text_input("رقم الجوال")
+            d_cap   = st.number_input("سعة الحافلة", 8, 60, 15)
+            d_area  = st.selectbox("منطقة الخدمة", ["شمال الرياض","وسط الرياض","شرق الرياض","غرب الرياض","جنوب الرياض"])
 
-            if st.form_submit_button("إضافة"):
-                run_query("INSERT INTO drivers (name,bus_no,phone,capacity,route_area) VALUES (?,?,?,?,?)",
-                          (dname, bus, phone, cap, area))
-                st.success("تمت الإضافة")
+            if st.form_submit_button("إضافة السائق"):
+                if d_name and d_bus:
+                    run_query(
+                        "INSERT INTO drivers (name, bus_no, phone, capacity, route_area) VALUES (?,?,?,?,?)",
+                        (d_name, d_bus, d_phone, d_cap, d_area)
+                    )
+                    st.success("تمت الإضافة")
+                else:
+                    st.error("اسم السائق ورقم الحافلة مطلوبان")
 
-    with col2:
-        st.subheader("قائمة السائقين")
-        dfd = get_df("SELECT * FROM drivers")
-        for _, r in dfd.iterrows():
-            with st.expander(f"🚌 {r['name']}  •  {r['bus_no']}"):
-                c1,c2,c3 = st.columns(3)
-                c1.metric("السعة", r["capacity"])
-                c2.metric("المنطقة", r["route_area"])
-                c3.write(f"📞 {r['phone']}")
+    with col_list:
+        st.subheader("قائمة السائقين (قابلة للتعديل والحذف)")
+
+        drivers_df = get_df("SELECT * FROM drivers")
+
+        current_load = {}
+        for _, row in drivers_df.iterrows():
+            cnt = get_df(
+                "SELECT COUNT(DISTINCT student_id) as cnt FROM trips WHERE driver_id = ?",
+                (row["id"],)
+            ).iloc[0]["cnt"]
+            current_load[row["id"]] = cnt
+
+        drivers_df["عدد الطالبات المسجلة"] = drivers_df["id"].map(current_load).fillna(0).astype(int)
+
+        edited_df = st.data_editor(
+            drivers_df,
+            column_config={
+                "id": None,
+                "name": st.column_config.TextColumn("اسم السائق"),
+                "bus_no": st.column_config.TextColumn("رقم الحافلة"),
+                "phone": "رقم الجوال",
+                "capacity": st.column_config.NumberColumn("السعة", min_value=5, max_value=80),
+                "route_area": st.column_config.SelectboxColumn(
+                    "المنطقة",
+                    options=["شمال الرياض","وسط الرياض","شرق الرياض","غرب الرياض","جنوب الرياض"]
+                ),
+                "عدد الطالبات المسجلة": st.column_config.NumberColumn("الركاب الحاليين", disabled=True)
+            },
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="drivers_editor"
+        )
+
+        if "drivers_editor" in st.session_state and st.session_state.drivers_editor.get("edited_rows"):
+            for row_idx, changes in st.session_state.drivers_editor["edited_rows"].items():
+                driver_id = drivers_df.iloc[row_idx]["id"]
+                updates = []
+                params = []
+                for col, val in changes.items():
+                    if col in ["name", "bus_no", "phone", "capacity", "route_area"]:
+                        updates.append(f"{col} = ?")
+                        params.append(val)
+                if updates:
+                    query = f"UPDATE drivers SET {', '.join(updates)} WHERE id = ?"
+                    params.append(driver_id)
+                    run_query(query, params)
+            st.toast("تم حفظ تعديلات السائقين", icon="💾")
+            st.rerun()
+
+        if st.session_state.drivers_editor.get("deleted_rows"):
+            deleted_indices = st.session_state.drivers_editor["deleted_rows"]
+            ids_to_delete = drivers_df.iloc[deleted_indices]["id"].tolist()
+            if ids_to_delete and st.button("تأكيد حذف السائقين المحددين", type="primary"):
+                placeholders = ",".join("?" * len(ids_to_delete))
+                run_query(f"DELETE FROM drivers WHERE id IN ({placeholders})", ids_to_delete)
+                run_query(f"DELETE FROM trips WHERE driver_id IN ({placeholders})", ids_to_delete)
+                st.success("تم حذف السائق/السائقين والتوزيعات المرتبطة")
+                st.rerun()
 
 # ─── 4. الخريطة الذكية ───────────────────────────────────────────────────────────
 elif menu == "📍 الخريطة الذكية":
     st.title("📍 التوزيع الجغرافي")
-
     dfm = get_df("SELECT name, district, lat, lon, fees_paid, fees_total FROM students")
 
     m = folium.Map(location=[24.7136, 46.6753], zoom_start=11, tiles="CartoDB positron")
@@ -326,16 +360,17 @@ elif menu == "🗓️ التوزيع اليومي":
     date_str = sel_date.strftime("%Y-%m-%d")
 
     students = get_df("SELECT id, name, sid, district FROM students WHERE status='نشط'")
-    drivers  = get_df("SELECT id, name, bus_no, capacity, route_area FROM drivers")
+    drivers  = get_df("SELECT id, name, bus_no, capacity FROM drivers")
 
     if students.empty or drivers.empty:
-        st.warning("تحتاج طالبات نشطات وسائقين مسجلين لعرض التوزيع")
+        st.warning("يجب وجود طالبات نشطات وسائقين لعرض التوزيع")
     else:
-        # التوزيع الحالي
         st.subheader(f"التوزيع في {date_str}")
-        curr = get_df("""
-            SELECT d.name, d.bus_no, COUNT(t.student_id) cnt,
-                   GROUP_CONCAT(s.name, '، ') students
+
+        current = get_df("""
+            SELECT d.name, d.bus_no, d.capacity,
+                   COUNT(t.student_id) as current_count,
+                   GROUP_CONCAT(s.name, '، ') as students_list
             FROM trips t
             JOIN drivers d ON t.driver_id = d.id
             JOIN students s ON t.student_id = s.id
@@ -343,78 +378,69 @@ elif menu == "🗓️ التوزيع اليومي":
             GROUP BY t.driver_id
         """, (date_str,))
 
-        if not curr.empty:
-            for _, r in curr.iterrows():
-                with st.expander(f"{r['name']} • {r['bus_no']}  ({r['cnt']} طالبة)"):
-                    st.write(r["students"] or "—")
-        else:
-            st.info("لا يوجد توزيع بعد لهذا اليوم")
+        for _, r in current.iterrows():
+            status = "🟢" if r["current_count"] <= r["capacity"] else "🔴 تجاوز السعة!"
+            with st.expander(f"{status} {r['name']} • {r['bus_no']}  ({r['current_count']}/{r['capacity']})"):
+                st.write(r["students_list"] or "لا يوجد طلاب بعد")
 
-        # نموذج التوزيع
         st.subheader("إضافة توزيع جديد")
 
         assigned = get_df("SELECT student_id FROM trips WHERE trip_date=? AND trip_type='go'",
                           (date_str,))["student_id"].tolist()
-
         avail = students[~students["id"].isin(assigned)]
 
         with st.form("assign_form"):
-            col_d, col_s = st.columns([1,3])
+            col_d, col_s = st.columns([1, 3])
 
             with col_d:
-                drv_dict = {f"{r['name']} • {r['bus_no']} (سعة {r['capacity']})": r["id"] for _,r in drivers.iterrows()}
-                sel_drv = st.selectbox("اختر السائق", options=list(drv_dict.keys()), index=None)
+                drv_options = {f"{r['name']} • {r['bus_no']} (سعة {r['capacity']})": r["id"] for _, r in drivers.iterrows()}
+                selected_drv = st.selectbox("اختر السائق / الحافلة", options=list(drv_options.keys()), index=None)
 
             with col_s:
-                if sel_drv:
-                    drv_id = drv_dict[sel_drv]
-                    curr_cnt = get_df("SELECT COUNT(*) c FROM trips WHERE trip_date=? AND driver_id=?",
-                                      (date_str, drv_id)).iloc[0]["c"]
-                    remain = drivers[drivers["id"]==drv_id]["capacity"].iloc[0] - curr_cnt
+                if selected_drv:
+                    drv_id = drv_options[selected_drv]
+                    curr_count = get_df(
+                        "SELECT COUNT(*) as c FROM trips WHERE trip_date=? AND driver_id=? AND trip_type='go'",
+                        (date_str, drv_id)
+                    ).iloc[0]["c"]
+                    remain = drivers[drivers["id"] == drv_id]["capacity"].iloc[0] - curr_count
 
-                    sel_stu = st.multiselect(
-                        f"اختر الطالبات  (متبقي {remain} مقعد)",
-                        options=avail["name"].tolist(),
-                        max_selections=max(0, remain)
-                    )
-
-            if st.form_submit_button("توزيع المختارات", type="primary"):
-                if not sel_drv:
-                    st.error("اختر سائقاً")
-                elif not sel_stu:
-                    st.warning("اختر طالبة واحدة على الأقل")
-                else:
-                    cnt = 0
-                    for nm in sel_stu:
-                        sid = avail[avail["name"]==nm]["id"].iloc[0]
-                        if not conn.execute(
-                            "SELECT 1 FROM trips WHERE trip_date=? AND driver_id=? AND student_id=?",
-                            (date_str, drv_id, sid)
-                        ).fetchone():
-                            run_query(
-                                "INSERT INTO trips (trip_date, driver_id, student_id, trip_type) VALUES (?,?,?,?)",
-                                (date_str, drv_id, sid, "go")
-                            )
-                            cnt += 1
-                    if cnt:
-                        st.success(f"تم توزيع {cnt} طالبة")
-                        st.rerun()
+                    if remain <= 0:
+                        st.error("الحافلة ممتلئة تماماً لهذا اليوم")
                     else:
-                        st.info("جميعهن موزعات مسبقاً")
+                        sel_students = st.multiselect(
+                            f"اختر الطالبات (متبقي {remain} مقعد)",
+                            options=avail["name"].tolist(),
+                            max_selections=remain
+                        )
+
+            submit = st.form_submit_button("توزيع الطالبات المختارة", type="primary", use_container_width=True)
+
+            if submit:
+                if not selected_drv:
+                    st.error("يرجى اختيار سائق")
+                elif not sel_students:
+                    st.warning("اختر طالبة واحدة على الأقل")
+                elif remain < len(sel_students):
+                    st.error(f"لا توجد سعة كافية! متبقي فقط {remain} مقعد")
+                else:
+                    added = 0
+                    for name in sel_students:
+                        stu_id = avail[avail["name"] == name]["id"].iloc[0]
+                        run_query(
+                            "INSERT OR IGNORE INTO trips (trip_date, driver_id, student_id, trip_type) VALUES (?,?,?,?)",
+                            (date_str, drv_id, stu_id, "go")
+                        )
+                        added += 1
+                    if added > 0:
+                        st.success(f"تم توزيع {added} طالبة بنجاح")
+                        st.rerun()
 
 # ─── 6. الإعدادات ───────────────────────────────────────────────────────────────
 elif menu == "⚙️ الإعدادات":
     st.title("⚙️ الإعدادات")
-
-    if st.button("📦 نسخة احتياطية"):
+    if st.button("📦 نسخ احتياطي لقاعدة البيانات"):
         with open("alkhaled_pro.db", "rb") as f:
-            st.download_button(
-                "تحميل قاعدة البيانات",
-                f,
-                file_name=f"backup_{datetime.date.today()}.db"
-            )
+            st.download_button("تحميل النسخة الاحتياطية", f, file_name=f"backup_{datetime.date.today()}.db")
 
-    st.checkbox("تفعيل الوضع الليلي التلقائي", value=True)
-    st.checkbox("إرسال تنبيهات SMS للتأخير في الدفع", value=False)
-
-st.caption("الخالد برو © 2025–2026")
+st.caption("نظام الخالد برو © 2025–2026 | تم التحديث: يناير 2026")
