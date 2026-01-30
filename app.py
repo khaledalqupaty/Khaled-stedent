@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 نظام الخالد الذكي للنقل المدرسي - الإصدار الاحترافي (Pro Edition)
-معدل: إضافة عمود أيام الدوام (يحسب اليوم مرة واحدة حتى لو ذهاب + عودة)
+معدل: إضافة عمود أيام الدوام + إصلاح خطأ merge أنواع البيانات
 """
 import streamlit as st
 import pandas as pd
@@ -147,7 +147,7 @@ if menu == "📊 لوحة القيادة":
     cols[2].markdown(f'<div class="kpi-card" style="border-color:var(--warning)"><div class="kpi-title">المتبقي</div><div class="kpi-value">{pending:,.0f} ر.س</div></div>', unsafe_allow_html=True)
     cols[3].markdown(f'<div class="kpi-card" style="border-color:var(--secondary)"><div class="kpi-title">عدد الحافلات</div><div class="kpi-value">{len(df_drv)}</div></div>', unsafe_allow_html=True)
 
-# ─── 2. الطالبات والرسوم (مع إضافة أيام الدوام) ───────────────────────────────
+# ─── 2. الطالبات والرسوم ───────────────────────────────────────────────────────
 elif menu == "👩‍🎓 الطالبات والرسوم":
     st.title("👩‍🎓 إدارة الطالبات والرسوم")
 
@@ -194,12 +194,15 @@ elif menu == "👩‍🎓 الطالبات والرسوم":
 
     # ─── حساب أيام الدوام (يوم واحد حتى لو ذهاب + عودة) ─────────────────────
     attendance = get_df("""
-        SELECT student_id, 
-               COUNT(DISTINCT trip_date) as days_count
+        SELECT student_id, COUNT(DISTINCT trip_date) as days_count
         FROM trips
         GROUP BY student_id
     """)
 
+    # تحويل student_id إلى نوع عددي لتجنب خطأ الـ merge
+    attendance["student_id"] = pd.to_numeric(attendance["student_id"], errors='coerce').astype('Int64')
+
+    # الدمج
     df = df.merge(attendance, left_on="id", right_on="student_id", how="left")
     df["أيام الدوام"] = df["days_count"].fillna(0).astype(int)
     df = df.drop(columns=["student_id", "days_count"], errors="ignore")
