@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 نظام الخالد الذكي للنقل المدرسي - الإصدار الاحترافي (Pro Edition)
-معدل ليعمل على Streamlit Cloud: قاعدة بيانات في /tmp + إزالة check_same_thread=False
+معدل: إصلاح مشكلة INSERT (10 أعمدة مقابل 9 قيم) + مسار /tmp لـ Streamlit Cloud
 """
 import streamlit as st
 import pandas as pd
@@ -47,61 +47,65 @@ st.markdown("""
 # ─── قاعدة البيانات (مسار آمن في Streamlit Cloud) ────────────────────────────
 @st.cache_resource
 def get_connection():
-    # استخدام /tmp → قابل للكتابة في Streamlit Cloud
     db_path = pathlib.Path("/tmp/alkhaled_pro.db")
     
-    try:
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL, sid TEXT UNIQUE NOT NULL, phone TEXT,
-                district TEXT, lat REAL, lon REAL,
-                fees_total REAL DEFAULT 5000, fees_paid REAL DEFAULT 0,
-                status TEXT DEFAULT 'نشط'
-            )
-        """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            sid TEXT UNIQUE NOT NULL,
+            phone TEXT,
+            district TEXT,
+            lat REAL,
+            lon REAL,
+            fees_total REAL DEFAULT 5000,
+            fees_paid REAL DEFAULT 0,
+            status TEXT DEFAULT 'نشط'
+        )
+    """)
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS drivers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL, bus_no TEXT UNIQUE,
-                phone TEXT, capacity INTEGER, route_area TEXT
-            )
-        """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS drivers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            bus_no TEXT UNIQUE,
+            phone TEXT,
+            capacity INTEGER,
+            route_area TEXT
+        )
+    """)
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS trips (
-                trip_date TEXT, driver_id INTEGER, student_id INTEGER,
-                trip_type TEXT DEFAULT 'go',
-                PRIMARY KEY(trip_date, driver_id, student_id, trip_type)
-            )
-        """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS trips (
+            trip_date TEXT,
+            driver_id INTEGER,
+            student_id INTEGER,
+            trip_type TEXT DEFAULT 'go',
+            PRIMARY KEY(trip_date, driver_id, student_id, trip_type)
+        )
+    """)
 
-        # بيانات تجريبية فقط إذا كان الجدول فارغًا
-        if not cur.execute("SELECT 1 FROM students LIMIT 1").fetchone():
-            students_seed = [
-                ("نورة فهد", "101", "0501111111", "الملقا",   24.810, 46.610, 5000, 5000, "نشط"),
-                ("سارة أحمد", "102", "0502222222", "النرجس",  24.830, 46.650, 5000, 2500, "نشط"),
-                ("ليان خالد", "103", "0503333333", "الياسمين",24.820, 46.630, 5000,    0, "نشط"),
-                ("ريم محمد", "104", "0504444444", "العارض",   24.850, 46.660, 5000, 5000, "نشط"),
-            ]
-            cur.executemany("INSERT INTO students VALUES (NULL,?,?,?,?,?,?,?,?)", students_seed)
+    # بيانات تجريبية إذا كان الجدول فارغًا
+    if not cur.execute("SELECT 1 FROM students LIMIT 1").fetchone():
+        students_seed = [
+            ("نورة فهد", "101", "0501111111", "الملقا",   24.810, 46.610, 5000, 5000, "نشط"),
+            ("سارة أحمد", "102", "0502222222", "النرجس",  24.830, 46.650, 5000, 2500, "نشط"),
+            ("ليان خالد", "103", "0503333333", "الياسمين",24.820, 46.630, 5000,    0, "نشط"),
+            ("ريم محمد", "104", "0504444444", "العارض",   24.850, 46.660, 5000, 5000, "نشط"),
+        ]
+        cur.executemany("INSERT INTO students VALUES (NULL,?,?,?,?,?,?,?,?,?)", students_seed)
 
-            drivers_seed = [
-                ("أبو عبدالله", "BUS-01", "0590000001", 15, "شمال الرياض"),
-                ("أبو صالح",    "BUS-02", "0590000002", 12, "وسط الرياض"),
-            ]
-            cur.executemany("INSERT INTO drivers VALUES (NULL,?,?,?,?,?)", drivers_seed)
+        drivers_seed = [
+            ("أبو عبدالله", "BUS-01", "0590000001", 15, "شمال الرياض"),
+            ("أبو صالح",    "BUS-02", "0590000002", 12, "وسط الرياض"),
+        ]
+        cur.executemany("INSERT INTO drivers VALUES (NULL,?,?,?,?,?)", drivers_seed)
 
-        conn.commit()
-        st.success("تم الاتصال بقاعدة البيانات بنجاح (مسار: /tmp)", icon="✅")
-        return conn
-    except Exception as e:
-        st.error(f"فشل إنشاء/الاتصال بقاعدة البيانات: {str(e)}")
-        st.stop()
+    conn.commit()
+    return conn
 
 conn = get_connection()
 
@@ -142,7 +146,7 @@ with st.sidebar:
         label_visibility="collapsed"
     )
     st.markdown("---")
-    st.info("💡 يمكنك نسخ الموقع من Google Maps مباشرة في صفحة إضافة طالبة")
+    st.info("💡 يمكنك نسخ الموقع من Google Maps في صفحة إضافة طالبة")
 
 # ─── 1. لوحة القيادة ────────────────────────────────────────────────────────────
 if menu == "📊 لوحة القيادة":
@@ -176,20 +180,20 @@ elif menu == "👩‍🎓 الطالبات والرسوم":
     if st.session_state.get("show_add_form", False):
         with st.form("add_student"):
             st.subheader("إضافة طالبة جديدة")
-            c1,c2,c3 = st.columns(3)
+            c1, c2, c3 = st.columns(3)
             name   = c1.text_input("الاسم الرباعي *")
             sid    = c2.text_input("رقم الملف / الهوية *")
             phone  = c3.text_input("رقم الجوال")
 
-            c4,c5 = st.columns(2)
+            c4, c5 = st.columns(2)
             dist   = c4.text_input("الحي السكني")
             fees   = c5.number_input("الرسوم السنوية", min_value=0, value=5000)
 
             location_text = st.text_area(
                 "انسخ الموقع هنا (من Google Maps)",
-                placeholder="مثال:\n24.7139, 46.6753\nأو 24.7139° N, 46.6753° E",
+                placeholder="مثال: 24.7139, 46.6753   أو   24.7139° N, 46.6753° E",
                 height=100,
-                help="انسخ النص الذي يحتوي على الإحداثيات"
+                help="انسخ النص الذي يحتوي على الإحداثيات مباشرة"
             )
 
             lat = None
@@ -208,31 +212,40 @@ elif menu == "👩‍🎓 الطالبات والرسوم":
                             lat = float(match.group(1))
                             lon = float(match.group(2))
                             if 20 < lat < 30 and 40 < lon < 55:
-                                st.success(f"تم قراءة: {lat:.6f}, {lon:.6f}")
+                                st.success(f"تم قراءة الموقع: {lat:.6f}, {lon:.6f}")
                                 break
                         except:
                             continue
 
             if lat is None or lon is None:
                 if location_text.strip():
-                    st.warning("لم يتم قراءة إحداثيات → استخدام موقع تقريبي")
+                    st.warning("لم يتم التعرف على إحداثيات صحيحة → موقع تقريبي")
                 lat = 24.7139 + random.uniform(-0.12, 0.12)
                 lon = 46.6753 + random.uniform(-0.12, 0.12)
 
-            if st.form_submit_button("حفظ الطالبة", type="primary"):
+            submitted = st.form_submit_button("حفظ الطالبة", type="primary")
+
+            if submitted:
                 if not name or not sid:
                     st.error("الاسم ورقم الملف مطلوبان")
                 else:
+                    # ─── الحل: ذكر 9 أعمدة + 9 قيم (id تلقائي) ──────────────────────
                     success = run_query(
-                        "INSERT INTO students (name, sid, phone, district, lat, lon, fees_total) VALUES (?,?,?,?,?,?,?)",
-                        (name, sid, phone, dist, lat, lon, fees)
+                        """
+                        INSERT INTO students 
+                        (name, sid, phone, district, lat, lon, fees_total, fees_paid, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (name, sid, phone, dist, lat, lon, fees, 0.0, 'نشط')
                     )
                     if success:
-                        st.success("تمت الإضافة")
+                        st.success("تمت إضافة الطالبة بنجاح ✓")
                         st.session_state.show_add_form = False
                         st.rerun()
+                    else:
+                        st.error("فشل الحفظ – ربما رقم الملف مكرر")
 
-    # عرض الجدول + أيام الدوام (من النسخة السابقة)
+    # عرض الجدول + أيام الدوام
     q = "SELECT * FROM students"
     if search:
         q += f" WHERE name LIKE '%{search}%' OR sid LIKE '%{search}%'"
@@ -249,9 +262,41 @@ elif menu == "👩‍🎓 الطالبات والرسوم":
     df["المتبقي"] = df["fees_total"] - df["fees_paid"]
     df["نسبة السداد"] = (df["fees_paid"] / df["fees_total"].replace(0,1)).clip(0,1).map(lambda x: f"{x:.0%}")
 
-    st.data_editor(df, use_container_width=True, hide_index=True)
+    edited = st.data_editor(
+        df,
+        column_config={
+            "id": None, "lat": None, "lon": None,
+            "name": "الاسم", "sid": "رقم الملف", "phone": "الجوال",
+            "district": "الحي",
+            "fees_paid": st.column_config.NumberColumn("المدفوع", format="%d ر.س"),
+            "fees_total": st.column_config.NumberColumn("الرسوم", format="%d ر.س"),
+            "أيام الدوام": st.column_config.NumberColumn("أيام الدوام", disabled=True, format="%d يوم"),
+            "status": st.column_config.SelectboxColumn("الحالة", options=["نشط","متوقف","خريج"]),
+            "المتبقي": None, "نسبة السداد": None
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="stu_editor"
+    )
+
+    # حفظ التعديلات (مثل النسخة السابقة)
+    if "stu_editor" in st.session_state and st.session_state.stu_editor.get("edited_rows"):
+        for idx, changes in st.session_state.stu_editor["edited_rows"].items():
+            sid = df.iloc[idx]["id"]
+            sets = ", ".join(f"{k}=?" for k in changes)
+            vals = list(changes.values()) + [sid]
+            run_query(f"UPDATE students SET {sets} WHERE id=?", vals)
+        st.toast("تم الحفظ", icon="💾")
+        st.rerun()
+
+    # تصدير Excel
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+        df.to_excel(w, index=False)
+        w.sheets["Sheet1"].right_to_left = True
+    st.download_button("📥 تحميل Excel", buf.getvalue(), "الطالبات.xlsx")
 
 # ─── باقي الأقسام (السائقين، الخريطة، التوزيع، الإعدادات) ──────────────────
-# أضفها من النسخة السابقة إذا كانت تعمل، أو قل لي لأضيف قسم معين
+# أضفها من النسخة السابقة حسب الحاجة، أو قل لي أي قسم تريد إضافته الآن
 
-st.caption("نظام الخالد برو © 2025–2026 | تم تعديل المسار ليعمل على السحابة")
+st.caption("نظام الخالد برو © 2025–2026 | تم التصحيح: يناير 2026")
