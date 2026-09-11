@@ -1,760 +1,364 @@
 # -*- coding: utf-8 -*-
 """
-🚌 نظام إدارة نقل الطالبات الاحترافي — الإصدار 2.1
-• إصلاح توافق pandas 3.x (Streamlit Cloud / Python 3.13)
-• واجهة بصرية جديدة بالكامل
-• ترحيل تلقائي للملفات القديمة + أرقام فواتير + سجل مالي + كشوف حسابات
-التشغيل: streamlit run school_transport_pro_v2.py
+🚌 نظام تشغيل نقل الطالبات اليومي — الإصدار 3.0
+الفكرة: توزيع الطالبات على السيارات صباح كل يوم + إرسال المواقع للسائق واتساب
+• إدارة الطالبات مع مواقع Google Maps وإحداثيات GPS
+• إدارة السائقين والمركبات
+• شاشة توزيع يومية (سحب/تحديد متعدد) مع ترتيب تلقائي جغرافي (أقرب مسار)
+• إرسال واتساب بنقرة واحدة عبر wa.me (بدون API مدفوع)
+• أرشيف الرحلات + عدد الركاب لكل سيارة
+التشغيل: streamlit run school_dispatch_v3.py
 """
 import os
-import numpy as np
+import math
+import urllib.parse
 import pandas as pd
 import streamlit as st
 from datetime import date
 
-# ============================================================
-#  قاعدة البيانات (CSV)
-# ============================================================
-DATA_DIR = "data"
+DATA_DIR = "data_v3"
 FILES = {
-    "buses":        ("buses.csv",        ["لوحة الحافلة", "نوع الحافلة", "السعة", "الحالة", "تاريخ الإضافة"]),
-    "drivers":      ("drivers.csv",      ["السائق", "رقم التواصل", "الهوية/الرخصة", "اللوحة المخصصة", "تاريخ الإضافة"]),
-    "routes":       ("routes.csv",       ["المسار", "المنطقة", "السائق", "اللوحة", "وقت الانطلاق", "ملاحظات"]),
-    "students":     ("students.csv",     ["الطالبة", "رقم التواصل", "اسم ولي الأمر", "الحي / موقع الاستلام", "المسار", "اللوحة", "الاشتراك الشهري", "تاريخ الالتحاق", "الحالة"]),
-    "attendance":   ("attendance.csv",   ["التاريخ", "الطالبة", "المسار", "الحالة"]),
-    "payments":     ("payments.csv",     ["رقم الفاتورة", "الشهر", "الطالبة", "المبلغ المطلوب", "المدفوع", "المتبقي", "حالة الدفع", "تاريخ آخر دفعة", "ملاحظات"]),
-    "transactions": ("transactions.csv", ["التاريخ", "الشهر", "الطالبة", "المبلغ", "طريقة الدفع", "ملاحظات"]),
+    "students": ("students.csv", ["الطالبة", "رقم ولي الأمر", "رقم المنزل",
+                                   "رابط الموقع", "خط العرض", "خط الطول", "ملاحظات", "نشطة"]),
+    "drivers":  ("drivers.csv",  ["السائق", "رقم الجوال (واتساب)"]),
+    "vehicles": ("vehicles.csv", ["المركبة", "اللوحة", "السعة"]),
+    "trips":    ("trips.csv",    ["التاريخ", "المركبة", "السائق", "الطالبة",
+                                  "الترتيب", "خط العرض", "خط الطول", "حالة الركوب"]),
 }
-PAY_METHODS = ["نقدي", "تحويل بنكي", "مدى", "STC Pay"]
-STATUSES = ["حاضرة", "غائبة", "معتذرة"]
-MONEY_COLS = {"المبلغ المطلوب", "المدفوع", "المتبقي", "المبلغ", "السعة", "الاشتراك الشهري"}
 
 
 def init_data():
-    """إنشاء الملفات الناقصة + ترحيل الملفات القديمة تلقائيًا دون فقدان بيانات."""
     os.makedirs(DATA_DIR, exist_ok=True)
     for fname, cols in FILES.values():
-        path = os.path.join(DATA_DIR, fname)
-        if not os.path.exists(path):
-            pd.DataFrame(columns=cols).to_csv(path, index=False, encoding="utf-8-sig")
-            continue
-        df = pd.read_csv(path, encoding="utf-8-sig")
-        changed = False
-
-        if fname == FILES["drivers"][0] and "اللوحة الم assigned" in df.columns and "اللوحة المخصصة" not in df.columns:
-            df = df.rename(columns={"اللوحة الم assigned": "اللوحة المخصصة"})
-            changed = True
-
-        for c in cols:
-            if c not in df.columns:
-                df[c] = ""
-                changed = True
-
-        if fname == FILES["payments"][0] and not df.empty:
-            mask = df["رقم الفاتورة"].astype(str).str.strip().isin(["", "nan", "None"])
-            if mask.any():
-                counters = {}
-                for idx in df[mask].index:
-                    m = str(df.at[idx, "الشهر"])
-                    counters[m] = counters.get(m, 0) + 1
-                    df.at[idx, "رقم الفاتورة"] = f"INV-{m}-{counters[m]:05d}"
-                changed = True
-
-        df = df[cols]
-        if changed:
-            df.to_csv(path, index=False, encoding="utf-8-sig")
+        p = os.path.join(DATA_DIR, fname)
+        if not os.path.exists(p):
+            pd.DataFrame(columns=cols).to_csv(p, index=False, encoding="utf-8-sig")
 
 
 def load_df(key):
-    """تحميل مع حماية كاملة من أخطاء الأنواع في pandas 3.x."""
-    path = os.path.join(DATA_DIR, FILES[key][0])
-    if not os.path.exists(path):
+    p = os.path.join(DATA_DIR, FILES[key][0])
+    if not os.path.exists(p):
         return pd.DataFrame(columns=FILES[key][1])
-    df = pd.read_csv(path, encoding="utf-8-sig")
-
-    for col in MONEY_COLS & set(df.columns):
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-    # ⚠️ pandas 3.x: أي عمود رقمي "فارغ" يجب تحويله لنص قبل إدخال قيم نصية فيه
+    df = pd.read_csv(p, encoding="utf-8-sig")
+    for c in FILES[key][1]:
+        if c not in df.columns:
+            df[c] = ""
+    # منع مشاكل الأنواع عند الإدخال النصي في أعمدة رقمية فارغة
     for col in df.columns:
-        if col not in MONEY_COLS and pd.api.types.is_numeric_dtype(df[col]):
+        if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].astype("object")
-    return df
+    return df[FILES[key][1]]
 
 
 def save_df(key, df):
     df.to_csv(os.path.join(DATA_DIR, FILES[key][0]), index=False, encoding="utf-8-sig")
 
 
-def money(x):
+def parse_coords(link):
+    """استخراج الإحداثيات من رابط Google Maps (أي صيغة شائعة)."""
+    link = str(link).strip()
     try:
-        return f"{float(x):,.0f} ر.س"
+        if "?q=" in link:
+            q = link.split("?q=")[1].split("&")[0]
+            lat, lon = q.split(",")[:2]
+            return float(lat), float(lon)
+        if "/@" in link:
+            part = link.split("@")[1].split(",")
+            return float(part[0]), float(part[1])
     except Exception:
-        return "0 ر.س"
+        pass
+    return None, None
 
 
-def next_invoice_id(pay_df, month):
-    """رقم فاتورة تالٍ داخل الشهر — لا يتكرر حتى بعد حذف فواتير."""
-    pref = f"INV-{month}-"
-    seqs = pd.to_numeric(
-        pay_df["رقم الفاتورة"].astype(str).str.replace(pref, "", regex=False),
-        errors="coerce")
-    seq = seqs.max()
-    return f"{pref}{(int(seq) if pd.notna(seq) else 0) + 1:05d}"
+def haversine(a, b):
+    R = 6371.0
+    la1, lo1, la2, lo2 = map(math.radians, [a[0], a[1], b[0], b[1]])
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(h))
+
+
+def order_route(coords, start=None):
+    """ترتيب نقاط التوقف بالجشع (أقرب جار) بدءًا من المدرسة أو أول نقطة."""
+    pts = list(coords.items())
+    if not pts:
+        return []
+    if start is None:
+        # نقطة البداية = أقصى نقطة جنوبًا غربًا (ناحية وسط المدينة غالبًا)
+        start = (min(p[1][0] for p in pts), min(p[1][1] for p in pts))
+    remaining = pts[:]
+    ordered = []
+    cur = start
+    while remaining:
+        nxt = min(remaining, key=lambda p: haversine(cur, p[1]))
+        ordered.append(nxt[0])
+        cur = nxt[1]
+        remaining.remove(nxt)
+    return ordered
 
 
 init_data()
 
-# ============================================================
-#  إعدادات الصفحة + التصميم البصري
-# ============================================================
-st.set_page_config(page_title="نظام إدارة نقل الطالبات", page_icon="🚌",
+st.set_page_config(page_title="نظام تشغيل نقل الطالبات", page_icon="🚌",
                    layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
     html, body, [class*="css"], .stMarkdown, label, input, select, textarea {
-        font-family: 'Tajawal', sans-serif !important;
-    }
-    .block-container { padding-top: 1.2rem; max-width: 1200px; }
-
-    /* الترويسة المتدرجة */
-    .hero {
-        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 55%, #06b6d4 100%);
-        padding: 26px 32px; border-radius: 18px; margin-bottom: 18px;
-        box-shadow: 0 10px 30px rgba(30, 58, 138, .28);
-    }
-    .hero-title { color: #fff; font-size: 1.9rem; font-weight: 800; }
-    .hero-sub { color: #dbeafe; font-size: .95rem; margin-top: 6px; }
-
-    /* عناوين الأقسام */
-    .section-title {
-        font-size: 1.15rem; font-weight: 800; color: #1e3a8a;
-        border-right: 5px solid #3b82f6; padding-right: 12px;
-        margin: 18px 0 10px;
-    }
-
-    /* بطاقات المؤشرات */
-    div[data-testid="stMetric"] {
-        background: #ffffff; border: 1px solid #e5e7eb;
-        border-radius: 14px; padding: 14px 18px;
-        box-shadow: 0 2px 10px rgba(0,0,0,.05);
-        transition: transform .15s ease, box-shadow .15s ease;
-    }
-    div[data-testid="stMetric"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 18px rgba(59,130,246,.15);
-        border-color: #bfdbfe;
-    }
-    div[data-testid="stMetricLabel"] { color: #6b7280; font-size: .9rem; }
-    div[data-testid="stMetricValue"] { color: #1e3a8a; font-size: 1.55rem; font-weight: 800; }
-
-    /* الأزرار */
-    .stButton > button {
-        border-radius: 10px; font-weight: 700; border: none;
-        background: linear-gradient(135deg, #2563eb, #3b82f6);
-        color: #fff; padding: .45rem 1.2rem;
-        box-shadow: 0 3px 10px rgba(37,99,235,.3);
-        transition: all .15s ease;
-    }
-    .stButton > button:hover { background: linear-gradient(135deg, #1d4ed8, #2563eb);
-        box-shadow: 0 5px 16px rgba(37,99,235,.4); }
-
-    /* التبويبات */
-    .stTabs [data-baseweb="tab-list"] { gap: 6px; }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 10px 10px 0 0; font-weight: 700; padding: 8px 18px;
-    }
-    .stTabs [aria-selected="true"] {
-        background: #eff6ff; color: #1d4ed8; border-bottom: 3px solid #3b82f6;
-    }
-
-    /* النماذج */
-    div[data-testid="stForm"] {
-        border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px;
-        background: #fafbfd;
-    }
-
-    /* الشريط الجانبي */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
-    }
-    .sidebar-box {
-        background: #fff; border-radius: 12px; padding: 14px;
-        border: 1px solid #e0e7ff; box-shadow: 0 2px 8px rgba(99,102,241,.08);
-    }
-    .sidebar-box b { color: #1e3a8a; }
-
-    /* بطاقات الحالة */
-    .success-card { background: #dff5e8; padding: 15px; border-radius: 12px; border-right: 4px solid #16a34a; }
-    .warning-card { background: #fff3cd; padding: 15px; border-radius: 12px; border-right: 4px solid #d97706; }
-    .danger-card  { background: #f8d7da; padding: 15px; border-radius: 12px; border-right: 4px solid #dc2626; }
-
-    /* تذييل */
-    footer, #MainMenu { visibility: hidden; }
-    .app-footer { color: #9ca3af; font-size: .8rem; text-align: center; margin-top: 40px; }
+        font-family: 'Tajawal', sans-serif !important; direction: rtl; text-align: right; }
+    .hero { background: linear-gradient(135deg, #065f46 0%, #059669 55%, #10b981 100%);
+        padding: 24px 32px; border-radius: 18px; margin-bottom: 18px;
+        box-shadow: 0 10px 30px rgba(5,150,105,.28); }
+    .hero-title { color: #fff; font-size: 1.8rem; font-weight: 800; }
+    .hero-sub { color: #d1fae5; font-size: .95rem; margin-top: 6px; }
+    .section-title { font-size: 1.15rem; font-weight: 800; color: #065f46;
+        border-right: 5px solid #10b981; padding-right: 12px; margin: 18px 0 10px; }
+    div[data-testid="stMetric"] { background: #fff; border: 1px solid #e5e7eb;
+        border-radius: 14px; padding: 12px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.05); }
+    div[data-testid="stMetricValue"] { color: #065f46; font-weight: 800; }
+    .stButton > button { border-radius: 10px; font-weight: 700; border: none;
+        background: linear-gradient(135deg, #059669, #10b981); color: #fff;
+        box-shadow: 0 3px 10px rgba(5,150,105,.3); }
+    .wa-btn a { display: inline-block; background: #25d366; color: #fff !important;
+        font-weight: 800; padding: .6rem 1.6rem; border-radius: 12px; text-decoration: none; }
 </style>
 """, unsafe_allow_html=True)
 
 
-def section_title(text):
-    st.markdown(f'<div class="section-title">{text}</div>', unsafe_allow_html=True)
+def section_title(t):
+    st.markdown(f'<div class="section-title">{t}</div>', unsafe_allow_html=True)
 
 
 st.markdown("""
 <div class="hero">
-    <div class="hero-title">🚌 نظام إدارة نقل الطالبات الاحترافي</div>
-    <div class="hero-sub">الإصدار 2.1 &nbsp;•&nbsp; فواتير مرقّمة &nbsp;•&nbsp; سجل مالي &nbsp;•&nbsp; كشوف حسابات &nbsp;•&nbsp; إشغال الحافلات</div>
+    <div class="hero-title">🚌 نظام تشغيل نقل الطالبات اليومي</div>
+    <div class="hero-sub">الإصدار 3.0 &nbsp;•&nbsp; توزيع صباحي على السيارات &nbsp;•&nbsp; ترتيب أقرب مسار تلقائي &nbsp;•&nbsp; إرسال واتساب للسائق &nbsp;•&nbsp; أرشيف الرحلات</div>
 </div>
 """, unsafe_allow_html=True)
 
-menu = [
-    "📊 لوحة التحكم",
-    "🚌 إدارة الحافلات",
-    "🧑‍✈️ إدارة السائقين",
-    "🗺️ إدارة المسارات",
-    "👩‍🎓 إدارة الطالبات",
-    "✅ الحضور اليومي",
-    "💳 الاشتراكات الشهرية",
-    "📈 التقارير الشاملة",
-]
+menu = ["🚐 التوزيع الصباحي", "👩‍🎓 الطالبات والمواقع", "🧑‍✈️ السائقون", "🚗 المركبات", "🗂️ أرشيف الرحلات"]
 choice = st.sidebar.selectbox("القائمة الرئيسية", menu)
 st.sidebar.markdown("""
-<div class="sidebar-box">
-    <b>💡 نصيحة سريعة</b><br>
-    ولّد فواتير كل شهر من تبويب «الاشتراكات» ثم سجّل الدفعات مع طريقة الدفع — يُحفظ كل شيء تلقائيًا في السجل المالي.
+<div style="background:#fff;border-radius:12px;padding:14px;border:1px solid #d1fae5;">
+<b style="color:#065f46;">💡 طريقة العمل اليومية</b><br>
+١) أضف الطالبات مع روابط مواقعها<br>
+٢) في «التوزيع الصباحي» حدد من ركبت كل سيارة<br>
+٣) اضغط «إرسال للسائق» — يفتح واتساب بالمسار مرتبًا جاهزًا للإرسال
 </div>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-#  1) لوحة التحكم
+#  1) التوزيع الصباحي
 # ============================================================
-if choice == "📊 لوحة التحكم":
-    buses_df, drivers_df = load_df("buses"), load_df("drivers")
-    routes_df, students_df = load_df("routes"), load_df("students")
-    att_df, pay_df = load_df("attendance"), load_df("payments")
+if choice == "🚐 التوزيع الصباحي":
+    students_df = load_df("students")
+    active = students_df[students_df["نشطة"].astype(str) == "نعم"] if not students_df.empty else students_df
+    drivers_df = load_df("drivers")
+    vehicles_df = load_df("vehicles")
+    trips_df = load_df("trips")
 
-    active_students = students_df[students_df["الحالة"] == "نشطة"] if not students_df.empty else students_df
-    today = str(date.today())
-    today_att = att_df[att_df["التاريخ"] == today] if not att_df.empty else pd.DataFrame()
-
-    cur_month = date.today().strftime("%Y-%m")
-    month_pay = pay_df[pay_df["الشهر"] == cur_month] if not pay_df.empty else pd.DataFrame()
-    required = float(month_pay["المبلغ المطلوب"].sum()) if not month_pay.empty else 0
-    paid_amt = float(month_pay["المدفوع"].sum()) if not month_pay.empty else 0
-    remaining = required - paid_amt
-    rate = round(paid_amt / required * 100, 1) if required else 0
-
-    section_title("📊 ملخص العمليات")
-    row = st.columns(4)
-    row[0].metric("🚌 الحافلات", len(buses_df))
-    row[1].metric("🧑‍✈️ السائقون", len(drivers_df))
-    row[2].metric("🗺️ المسارات", len(routes_df))
-    row[3].metric("👩‍🎓 الطالبات النشطات", len(active_students))
-
-    row = st.columns(4)
-    row[0].metric("💰 مستحقات الشهر", money(required))
-    row[1].metric("✅ المحصّل", money(paid_amt))
-    row[2].metric("⏳ المتبقي", money(max(remaining, 0)))
-    row[3].metric("📈 نسبة التحصيل", f"{rate}%")
-
-    st.markdown("---")
-    left, right = st.columns(2)
-
-    with left:
-        section_title("🗺️ حالة الجولات اليومية")
-        if not routes_df.empty:
-            disp = routes_df.copy()
-            disp["عدد الطالبات"] = disp["المسار"].map(
-                active_students.groupby("المسار").size() if not active_students.empty else {}
-            ).fillna(0).astype(int)
-            disp["حاضرات اليوم"] = disp["المسار"].map(
-                today_att[today_att["الحالة"] == "حاضرة"].groupby("المسار").size() if not today_att.empty else {}
-            ).fillna(0).astype(int)
-            cap = disp["اللوحة"].map(buses_df.set_index("لوحة الحافلة")["السعة"]) if not buses_df.empty else pd.Series(np.nan, index=disp.index)
-            disp["نسبة الإشغال %"] = (disp["عدد الطالبات"] / cap.replace(0, np.nan) * 100).fillna(0).round(1)
-            st.dataframe(disp, use_container_width=True, hide_index=True)
-        else:
-            st.info("لم تُعرّف مسارات بعد.")
-
-    with right:
-        section_title("✅ حضور اليوم")
-        if not today_att.empty:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("🟢 حاضرات", len(today_att[today_att["الحالة"] == "حاضرة"]))
-            c2.metric("🔴 غائبات", len(today_att[today_att["الحالة"] == "غائبة"]))
-            c3.metric("🟡 معتذرات", len(today_att[today_att["الحالة"] == "معتذرة"]))
-        else:
-            st.info("لم يُسجّل حضور اليوم بعد.")
-
-        section_title("💳 متأخرات السداد")
-        if not month_pay.empty:
-            late = month_pay[month_pay["حالة الدفع"] != "مدفوع"]
-            st.metric("طالبات عليهن مستحقات", len(late))
-            if not late.empty:
-                st.dataframe(late[["رقم الفاتورة", "الطالبة", "المتبقي", "حالة الدفع"]],
-                             use_container_width=True, hide_index=True)
-        else:
-            st.info(f"لم تُولّد فواتير شهر {cur_month} بعد — من قائمة الاشتراكات.")
-
-
-# ============================================================
-#  2) إدارة الحافلات
-# ============================================================
-elif choice == "🚌 إدارة الحافلات":
-    buses_df = load_df("buses")
-    section_title("🚌 سجل الحافلات")
-    t1, t2, t3 = st.tabs(["➕ إضافة حافلة", "✏️ تعديل", "🗑️ حذف"])
-
-    with t1:
-        with st.form("add_bus", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            plate = c1.text_input("رقم اللوحة")
-            btype = c2.selectbox("نوع الحافلة", ["حافلة صغيرة", "حافلة متوسطة", "حافلة كبيرة", "فان", "أخرى"])
-            c3, c4 = st.columns(2)
-            cap = c3.number_input("السعة (عدد المقاعد)", min_value=1, max_value=80, value=30)
-            status = c4.selectbox("حالة الحافلة", ["جاهزة", "في الصيانة", "خارج الخدمة"])
-            if st.form_submit_button("💾 حفظ الحافلة"):
-                if plate:
-                    if not buses_df.empty and plate in buses_df["لوحة الحافلة"].astype(str).values:
-                        st.warning("هذه اللوحة مسجلة مسبقًا!")
-                    else:
-                        buses_df.loc[len(buses_df)] = [plate, btype, cap, status, str(date.today())]
-                        save_df("buses", buses_df)
-                        st.success(f"✅ تمت إضافة الحافلة {plate}.")
-                        st.rerun()
-                else:
-                    st.error("رقم اللوحة إلزامي.")
-
-    with t2:
-        if buses_df.empty:
-            st.info("لا توجد حافلات مسجلة.")
-        else:
-            sel = st.selectbox("اختر الحافلة", buses_df["لوحة الحافلة"].tolist())
-            r = buses_df[buses_df["لوحة الحافلة"] == sel].iloc[0]
-            with st.form("edit_bus"):
-                c1, c2 = st.columns(2)
-                opts = ["حافلة صغيرة", "حافلة متوسطة", "حافلة كبيرة", "فان", "أخرى"]
-                bt = c1.selectbox("النوع", opts, index=opts.index(r["نوع الحافلة"]) if r["نوع الحافلة"] in opts else 4)
-                st_opts = ["جاهزة", "في الصيانة", "خارج الخدمة"]
-                cp = c2.number_input("السعة", min_value=1, max_value=80, value=int(r["السعة"]))
-                stt = st.selectbox("الحالة", st_opts, index=st_opts.index(r["الحالة"]) if r["الحالة"] in st_opts else 0)
-                if st.form_submit_button("✏️ تحديث"):
-                    buses_df.loc[buses_df["لوحة الحافلة"] == sel, ["نوع الحافلة", "السعة", "الحالة"]] = [bt, cp, stt]
-                    save_df("buses", buses_df)
-                    st.success("✅ تم التحديث.")
-                    st.rerun()
-
-    with t3:
-        if buses_df.empty:
-            st.info("لا توجد حافلات مسجلة.")
-        else:
-            sel = st.selectbox("اختر حافلة للحذف", buses_df["لوحة الحافلة"].tolist(), key="del_bus")
-            if st.button("🗑️ حذف الحافلة"):
-                save_df("buses", buses_df[buses_df["لوحة الحافلة"] != sel])
-                st.success("✅ تم الحذف.")
-                st.rerun()
-
-    section_title("📋 قائمة الحافلات")
-    st.dataframe(buses_df, use_container_width=True, hide_index=True) if not buses_df.empty else st.info("لا توجد بيانات.")
-
-
-# ============================================================
-#  3) إدارة السائقين
-# ============================================================
-elif choice == "🧑‍✈️ إدارة السائقين":
-    drivers_df, buses_df = load_df("drivers"), load_df("buses")
-    plates = buses_df["لوحة الحافلة"].tolist() if not buses_df.empty else []
-    section_title("🧑‍✈️ سجل السائقين")
-    t1, t2, t3 = st.tabs(["➕ إضافة سائق", "✏️ تعديل", "🗑️ حذف"])
-
-    with t1:
-        with st.form("add_driver", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            name = c1.text_input("اسم السائق")
-            phone = c2.text_input("رقم التواصل")
-            lic = st.text_input("رقم الهوية / الرخصة")
-            plate = st.selectbox("الحافلة المخصصة", plates) if plates else st.text_input("رقم اللوحة")
-            if st.form_submit_button("💾 حفظ السائق"):
-                if name and phone:
-                    drivers_df.loc[len(drivers_df)] = [name, phone, lic, plate, str(date.today())]
-                    save_df("drivers", drivers_df)
-                    st.success(f"✅ تم حفظ السائق {name}.")
-                    st.rerun()
-                else:
-                    st.error("الاسم ورقم التواصل إلزاميان.")
-
-    with t2:
-        if drivers_df.empty:
-            st.info("لا يوجد سائقون.")
-        else:
-            sel = st.selectbox("اختر السائق", drivers_df["السائق"].tolist(), key="ed_drv")
-            r = drivers_df[drivers_df["السائق"] == sel].iloc[0]
-            with st.form("edit_driver"):
-                ph = st.text_input("رقم التواصل", value=str(r["رقم التواصل"]))
-                lc = st.text_input("الهوية / الرخصة", value=str(r["الهوية/الرخصة"]))
-                pl = (st.selectbox("الحافلة", plates,
-                                   index=plates.index(r["اللوحة المخصصة"]) if r["اللوحة المخصصة"] in plates else 0)
-                      if plates else st.text_input("اللوحة", value=str(r["اللوحة المخصصة"])))
-                if st.form_submit_button("✏️ تحديث"):
-                    drivers_df.loc[drivers_df["السائق"] == sel,
-                                   ["رقم التواصل", "الهوية/الرخصة", "اللوحة المخصصة"]] = [ph, lc, pl]
-                    save_df("drivers", drivers_df)
-                    st.success("✅ تم التحديث.")
-                    st.rerun()
-
-    with t3:
-        if drivers_df.empty:
-            st.info("لا يوجد سائقون.")
-        else:
-            sel = st.selectbox("اختر سائقًا للحذف", drivers_df["السائق"].tolist(), key="del_drv")
-            if st.button("🗑️ حذف السائق"):
-                save_df("drivers", drivers_df[drivers_df["السائق"] != sel])
-                st.success("✅ تم الحذف.")
-                st.rerun()
-
-    section_title("📋 قائمة السائقين")
-    st.dataframe(drivers_df, use_container_width=True, hide_index=True) if not drivers_df.empty else st.info("لا توجد بيانات.")
-
-
-# ============================================================
-#  4) إدارة المسارات
-# ============================================================
-elif choice == "🗺️ إدارة المسارات":
-    routes_df, drivers_df, buses_df = load_df("routes"), load_df("drivers"), load_df("buses")
-    drv_list = drivers_df["السائق"].tolist() if not drivers_df.empty else []
-    plt_list = buses_df["لوحة الحافلة"].tolist() if not buses_df.empty else []
-    section_title("🗺️ المسارات والمناطق")
-
-    with st.form("add_route", clear_on_submit=True):
-        c1, c2, c3, c4 = st.columns(4)
-        route = c1.text_input("اسم المسار")
-        area = c2.text_input("المنطقة / الاتجاه")
-        driver = c3.selectbox("السائق", drv_list) if drv_list else c3.text_input("السائق")
-        plate = c4.selectbox("اللوحة", plt_list) if plt_list else c4.text_input("اللوحة")
-        c5, c6 = st.columns(2)
-        ttime = c5.text_input("وقت الانطلاق", placeholder="مثال: 6:30 صباحًا")
-        notes = c6.text_input("ملاحظات")
-        if st.form_submit_button("➕ إضافة مسار"):
-            if route and area:
-                routes_df.loc[len(routes_df)] = [route, area, driver, plate, ttime, notes]
-                save_df("routes", routes_df)
-                st.success(f"✅ تمت إضافة المسار {route}.")
-                st.rerun()
-            else:
-                st.error("اسم المسار والمنطقة إلزاميان.")
-
-    if not routes_df.empty:
-        section_title("📋 المسارات المسجلة")
-        st.dataframe(routes_df, use_container_width=True, hide_index=True)
-        sel = st.selectbox("اختر مسارًا للحذف", routes_df["المسار"].tolist())
-        if st.button("🗑️ حذف المسار"):
-            save_df("routes", routes_df[routes_df["المسار"] != sel])
-            st.success("✅ تم الحذف.")
-            st.rerun()
+    if active.empty or vehicles_df.empty:
+        st.warning("⚠️ أضف طالبات (بمواقعها) ومركبات أولًا من القوائم الجانبية.")
     else:
-        st.info("لا توجد مسارات بعد.")
+        trip_date = str(st.date_input("📅 تاريخ الرحلة", value=date.today()))
+        assigned_today = set(trips_df[trips_df["التاريخ"] == trip_date]["الطالبة"].tolist()) if not trips_df.empty else set()
+
+        section_title("🚐 توزيع الطالبات على المركبات")
+        st.caption("حدد الطالبات لكل مركبة ثم اضغط «تثبيت التوزيع» — يُرتب المسار تلقائيًا بالأقرب جغرافيًا.")
+
+        col_a, col_b = st.columns([2, 1])
+        with col_b:
+            section_title("👥 الطالبات المتاحات")
+            st.caption(f"المتبقي بدون تخصيص: {len(set(active['الطالبة']) - assigned_today)}")
+            st.dataframe(active[["الطالبة"]], use_container_width=True, hide_index=True)
+
+        with col_a:
+            assignments = {}
+            for _, veh in vehicles_df.iterrows():
+                cap = int(pd.to_numeric(pd.Series([veh["السعة"]]), errors="coerce")[0] or 0)
+                drv_list = drivers_df["السائق"].tolist() if not drivers_df.empty else []
+                with st.expander(f"🚗 {veh['المركبة']} — {veh['اللوحة']}", expanded=True):
+                    c1, c2 = st.columns(2)
+                    drv = c1.selectbox("السائق", drv_list, key=f"drv_{veh['المركبة']}") if drv_list else c1.text_input("السائق", key=f"drv_{veh['المركبة']}")
+                    already = sorted(set(active["الطالبة"]) & assigned_today)
+                    picked = c2.multiselect("الركاب", sorted(active["الطالبة"].tolist()),
+                                            default=already, key=f"pick_{veh['المركبة']}")
+                    if cap and len(picked) > cap:
+                        st.error(f"⚠️ عدد الركاب ({len(picked)}) يتجاوز السعة ({cap})")
+                    if picked:
+                        sub = active[active["الطالبة"].isin(picked)][["الطالبة", "خط العرض", "خط الطول"]]
+                        coords = {r["الطالبة"]: (float(r["خط العرض"]), float(r["خط الطول"]))
+                                  for _, r in sub.iterrows()
+                                  if pd.notna(pd.to_numeric(pd.Series([r["خط العرض"]]), errors="coerce")[0])}
+                        if len(coords) == len(picked):
+                            ordered = order_route(coords)
+                            st.success("🔢 الترتيب المقترح: " + " ← ".join(ordered))
+                            phone = ""
+                            m = drivers_df[drivers_df["السائق"] == drv]
+                            if not m.empty:
+                                phone = str(m.iloc[0]["رقم الجوال (واتساب)"]).replace("+", "").replace(" ", "")
+                            if phone:
+                                lines = [f"🚌 رحلة {trip_date} — {veh['المركبة']}", ""]
+                                for i, nme in enumerate(ordered, 1):
+                                    link = active[active["الطالبة"] == nme]["رابط الموقع"].iloc[0]
+                                    lines.append(f"{i}- {nme}")
+                                    lines.append(str(link))
+                                wa = "https://wa.me/" + phone + "?text=" + urllib.parse.quote("\n".join(lines))
+                                st.markdown(f'<div class="wa-btn"><a href="{wa}" target="_blank">📲 إرسال المسار للسائق واتساب</a></div>', unsafe_allow_html=True)
+                            else:
+                                st.caption("أضف رقم جوال السائق لتفعيل زر واتساب.")
+                        else:
+                            st.info("بعض الركاب بدون إحداثيات — أكمل مواقعهم ليتم الترتيب التلقائي.")
+                    assignments[veh["المركبة"]] = (veh, drv, picked)
+
+            if st.button("💾 تثبيت التوزيع وأرشفة الرحلة"):
+                trips_df = trips_df[trips_df["التاريخ"] != trip_date] if not trips_df.empty else trips_df
+                rows = []
+                for veh_name, (veh, drv, picked) in assignments.items():
+                    if not picked:
+                        continue
+                    sub = active[active["الطالبة"].isin(picked)][["الطالبة", "خط العرض", "خط الطول"]]
+                    coords = {r["الطالبة"]: (float(r["خط العرض"]), float(r["خط الطول"])) for _, r in sub.iterrows()
+                              if pd.notna(pd.to_numeric(pd.Series([r["خط العرض"]]), errors="coerce")[0])}
+                    ordered = order_route(coords) if len(coords) == len(picked) else picked
+                    for i, nme in enumerate(ordered, 1):
+                        lat = coords.get(nme, (None, None))[0]
+                        lon = coords.get(nme, (None, None))[1]
+                        rows.append([trip_date, veh_name, drv, nme, i, lat, lon, "على المتن"])
+                trips_df = pd.concat([trips_df, pd.DataFrame(rows, columns=FILES["trips"][1])], ignore_index=True)
+                save_df("trips", trips_df)
+                st.success(f"✅ تم أرشفة رحلة {trip_date} — {len(rows)} رحلة طالبة.")
+                st.rerun()
 
 
 # ============================================================
-#  5) إدارة الطالبات
+#  2) الطالبات والمواقع
 # ============================================================
-elif choice == "👩‍🎓 إدارة الطالبات":
-    students_df, routes_df, buses_df = load_df("students"), load_df("routes"), load_df("buses")
-    route_list = routes_df["المسار"].tolist() if not routes_df.empty else []
-    plt_list = buses_df["لوحة الحافلة"].tolist() if not buses_df.empty else []
-    section_title("👩‍🎓 سجل الطالبات")
-    t1, t2, t3 = st.tabs(["➕ إضافة طالبة", "✏️ تعديل / 🗑️ حذف", "📋 القائمة والبحث"])
+elif choice == "👩‍🎓 الطالبات والمواقع":
+    students_df = load_df("students")
+    section_title("👩‍🎓 سجل الطالبات والمواقع")
+    t1, t2 = st.tabs(["➕ إضافة طالبة", "📋 القائمة والبحث"])
 
     with t1:
-        if not route_list:
-            st.warning("⚠️ أضف مسارًا أولًا من قائمة المسارات.")
         with st.form("add_student", clear_on_submit=True):
+            name = st.text_input("اسم الطالبة *")
             c1, c2 = st.columns(2)
-            name = c1.text_input("اسم الطالبة")
-            phone = c2.text_input("رقم التواصل")
-            parent = st.text_input("اسم ولي الأمر")
-            area = st.text_input("الحي / موقع الاستلام")
-            c3, c4 = st.columns(2)
-            route = c3.selectbox("المسار", route_list) if route_list else c3.text_input("المسار")
-            plate = c4.selectbox("الحافلة", plt_list) if plt_list else c4.text_input("اللوحة")
-            sub = st.number_input("قيمة الاشتراك الشهري (ر.س)", min_value=0, value=200, step=10)
-            if st.form_submit_button("💾 حفظ الطالبة"):
-                if name and route:
-                    students_df.loc[len(students_df)] = [name, phone, parent, area, route, plate, sub, str(date.today()), "نشطة"]
-                    save_df("students", students_df)
-                    st.success(f"✅ تم تسجيل الطالبة {name}.")
-                    st.rerun()
+            parent = c1.text_input("رقم ولي الأمر")
+            home = c2.text_input("رقم المنزل")
+            link = st.text_input("🔗 رابط الموقع (Google Maps — شارك الموقع ثم انسخ الرابط)", 
+                                 placeholder="https://maps.google.com/?q=24.71,46.67")
+            notes = st.text_input("ملاحظات (مثال: تُستلم من البوابة الشرقية)")
+            if st.form_submit_button("💾 حفظ"):
+                if not name:
+                    st.error("الاسم إلزامي.")
+                elif not students_df.empty and name in students_df["الطالبة"].astype(str).values:
+                    st.warning("الطالبة مسجلة مسبقًا.")
                 else:
-                    st.error("اسم الطالبة والمسار إلزاميان.")
+                    lat, lon = parse_coords(link)
+                    if lat is None:
+                        st.warning("⚠️ تعذر استخراج الإحداثيات من الرابط — سيظل الترتيب اليدوي. تأكد أن الرابط يحتوي ?q=خط_العرض,خط_الطول")
+                    students_df.loc[len(students_df)] = [name, parent, home, link,
+                                                         lat if lat is not None else "", lon if lon is not None else "", notes, "نعم"]
+                    save_df("students", students_df)
+                    st.success(f"✅ تم حفظ {name}" + ("" if lat is not None else " (بدون إحداثيات)"))
+                    st.rerun()
 
     with t2:
         if students_df.empty:
             st.info("لا توجد طالبات.")
         else:
-            sel = st.selectbox("اختر الطالبة", students_df["الطالبة"].tolist())
-            r = students_df[students_df["الطالبة"] == sel].iloc[0]
-            with st.form("edit_student"):
-                c1, c2 = st.columns(2)
-                ph = c1.text_input("رقم التواصل", value=str(r["رقم التواصل"]))
-                par = c2.text_input("ولي الأمر", value=str(r["اسم ولي الأمر"]))
-                ar = st.text_input("الحي", value=str(r["الحي / موقع الاستلام"]))
-                ro = (st.selectbox("المسار", route_list,
-                                   index=route_list.index(r["المسار"]) if r["المسار"] in route_list else 0)
-                      if route_list else st.text_input("المسار", value=str(r["المسار"])))
-                pl = (st.selectbox("الحافلة", plt_list,
-                                   index=plt_list.index(r["اللوحة"]) if r["اللوحة"] in plt_list else 0)
-                      if plt_list else st.text_input("اللوحة", value=str(r["اللوحة"])))
-                c5, c6 = st.columns(2)
-                sb = c5.number_input("الاشتراك الشهري", min_value=0, value=int(r["الاشتراك الشهري"]))
-                stt = c6.selectbox("الحالة", ["نشطة", "موقوفة"], index=0 if r["الحالة"] == "نشطة" else 1)
-                cu, cd = st.columns(2)
-                upd = cu.form_submit_button("✏️ تحديث")
-                dele = cd.form_submit_button("🗑️ حذف الطالبة")
-            if upd:
-                students_df.loc[students_df["الطالبة"] == sel,
-                                ["رقم التواصل", "اسم ولي الأمر", "الحي / موقع الاستلام", "المسار",
-                                 "اللوحة", "الاشتراك الشهري", "الحالة"]] = [ph, par, ar, ro, pl, sb, stt]
+            q = st.text_input("🔍 بحث")
+            view = students_df
+            if q:
+                view = view[view["الطالبة"].astype(str).str.contains(q, na=False)]
+            st.dataframe(view, use_container_width=True, hide_index=True)
+            sel = st.selectbox("اختر طالبة", students_df["الطالبة"].tolist())
+            c1, c2 = st.columns(2)
+            if c1.button("🚫 إيقاف/تفعيل"):
+                cur = students_df.loc[students_df["الطالبة"] == sel, "نشطة"].iloc[0]
+                students_df.loc[students_df["الطالبة"] == sel, "نشطة"] = "لا" if cur == "نعم" else "نعم"
                 save_df("students", students_df)
-                st.success("✅ تم التحديث.")
                 st.rerun()
-            if dele:
+            if c2.button("🗑️ حذف"):
                 save_df("students", students_df[students_df["الطالبة"] != sel])
                 st.success("✅ تم الحذف.")
                 st.rerun()
 
-    with t3:
-        if not students_df.empty:
-            c1, c2 = st.columns(2)
-            f = c1.multiselect("تصفية حسب المسار", students_df["المسار"].unique().tolist())
-            search = c2.text_input("🔍 البحث عن طالبة")
-            view_df = students_df
-            if f:
-                view_df = view_df[view_df["المسار"].isin(f)]
-            if search:
-                view_df = view_df[view_df["الطالبة"].astype(str).str.contains(search, case=False, na=False)]
-            st.dataframe(view_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد بيانات.")
-
 
 # ============================================================
-#  6) الحضور اليومي
+#  3) السائقون
 # ============================================================
-elif choice == "✅ الحضور اليومي":
-    students_df, att_df = load_df("students"), load_df("attendance")
-    active = students_df[students_df["الحالة"] == "نشطة"] if not students_df.empty else students_df
-    section_title("✅ تسجيل حضور الجولة")
-
-    if active.empty:
-        st.info("لا توجد طالبات نشطات — أضف طالبات أولًا.")
-    else:
+elif choice == "🧑‍✈️ السائقون":
+    drivers_df = load_df("drivers")
+    section_title("🧑‍✈️ سجل السائقين")
+    with st.form("add_driver", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        att_date = c1.date_input("تاريخ الجولة", value=date.today())
-        route_filter = c2.selectbox("المسار", ["الكل"] + sorted(active["المسار"].unique().tolist()))
-        group = active if route_filter == "الكل" else active[active["المسار"] == route_filter]
-
-        existing = att_df[att_df["التاريخ"] == str(att_date)] if not att_df.empty else pd.DataFrame()
-
-        statuses = {}
-        for _, r in group.iterrows():
-            d = 0
-            if not existing.empty:
-                m = existing[existing["الطالبة"] == r["الطالبة"]]
-                if not m.empty and m.iloc[0]["الحالة"] in STATUSES:
-                    d = STATUSES.index(m.iloc[0]["الحالة"])
-            statuses[r["الطالبة"]] = st.radio(
-                f"**{r['الطالبة']}** — {r['المسار']}",
-                STATUSES, index=d, horizontal=True,
-                key=f"att_{att_date}_{r['الطالبة']}")
-
-        if st.button("💾 حفظ سجل الحضور"):
-            names = list(statuses.keys())
-            att_df = att_df[~((att_df["التاريخ"] == str(att_date)) & (att_df["الطالبة"].isin(names)))] \
-                if not att_df.empty else att_df
-            new_rows = pd.DataFrame([{
-                "التاريخ": str(att_date), "الطالبة": n,
-                "المسار": group[group["الطالبة"] == n]["المسار"].iloc[0],
-                "الحالة": s} for n, s in statuses.items()])
-            att_df = pd.concat([att_df, new_rows], ignore_index=True)
-            save_df("attendance", att_df)
-            st.success("✅ تم حفظ سجل الحضور!")
-
-
-# ============================================================
-#  7) الاشتراكات الشهرية وحالة الدفع
-# ============================================================
-elif choice == "💳 الاشتراكات الشهرية":
-    students_df, pay_df = load_df("students"), load_df("payments")
-    active = students_df[students_df["الحالة"] == "نشطة"] if not students_df.empty else students_df
-    section_title("💳 الاشتراكات الشهرية وتتبع الدفع")
-    t1, t2, t3, t4 = st.tabs(["🧾 توليد فواتير", "💵 تسجيل دفعة", "📋 حالة الدفع", "🧾 كشف حساب طالبة"])
-
-    with t1:
-        cur_month = date.today().strftime("%Y-%m")
-        month = st.text_input("شهر الفواتير (YYYY-MM)", value=cur_month)
-        if st.button("🧾 توليد فواتير جميع الطالبات النشطات"):
-            if active.empty:
-                st.warning("لا توجد طالبات نشطات.")
+        name = c1.text_input("اسم السائق *")
+        phone = c2.text_input("رقم الجوال مع كود الدولة (واتساب) *", placeholder="9665xxxxxxxx")
+        if st.form_submit_button("💾 حفظ"):
+            if name and phone:
+                drivers_df.loc[len(drivers_df)] = [name, phone]
+                save_df("drivers", drivers_df)
+                st.success(f"✅ تم حفظ {name}")
+                st.rerun()
             else:
-                existing = pay_df[pay_df["الشهر"] == month]["الطالبة"].tolist() if not pay_df.empty else []
-                added = 0
-                for _, r in active.iterrows():
-                    if r["الطالبة"] not in existing:
-                        amt = float(r["الاشتراك الشهري"])
-                        inv = next_invoice_id(pay_df, month)
-                        pay_df.loc[len(pay_df)] = [inv, month, r["الطالبة"], amt, 0, amt, "غير مدفوع", "", ""]
-                        added += 1
-                save_df("payments", pay_df)
-                st.success(f"✅ تم توليد {added} فاتورة لشهر {month}.")
-
-    with t2:
-        if pay_df.empty:
-            st.info("لا توجد فواتير — ولّد فواتير أولًا.")
-        else:
-            month = st.selectbox("الشهر", sorted(pay_df["الشهر"].unique().tolist(), reverse=True), key="pay_month")
-            unpaid = pay_df[(pay_df["الشهر"] == month) & (pay_df["حالة الدفع"] != "مدفوع")]
-            if unpaid.empty:
-                st.success("🎉 جميع الفواتير مدفوعة لهذا الشهر!")
-            else:
-                sel = st.selectbox("اختر الطالبة", unpaid["الطالبة"].tolist())
-                r = unpaid[unpaid["الطالبة"] == sel].iloc[0]
-
-                col1, col2, col3 = st.columns(3)
-                col1.metric("💰 المطلوب", money(r["المبلغ المطلوب"]))
-                col2.metric("✅ المدفوع", money(r["المدفوع"]))
-                col3.metric("⏳ المتبقي", money(r["المتبقي"]))
-                st.caption(f"🧾 رقم الفاتورة: {r['رقم الفاتورة']}")
-
-                amt = st.number_input("مبلغ الدفعة (ر.س)", min_value=0.0, value=float(r["المتبقي"]), step=10.0)
-                method = st.selectbox("طريقة الدفع", PAY_METHODS)
-                note = st.text_input("ملاحظات", placeholder="دفعة جزئية / خصم / ...")
-
-                if st.button("💵 تسجيل الدفعة"):
-                    if amt <= 0:
-                        st.error("⚠️ مبلغ الدفعة يجب أن يكون أكبر من صفر.")
-                    elif amt > float(r["المتبقي"]):
-                        st.warning("⚠️ لا يمكن دفع مبلغ أكبر من المتبقي.")
-                    else:
-                        new_paid = float(r["المدفوع"]) + amt
-                        new_rem = float(r["المبلغ المطلوب"]) - new_paid
-                        new_status = "مدفوع" if new_rem <= 0 else ("جزئي" if new_paid > 0 else "غير مدفوع")
-                        pay_df.loc[(pay_df["الشهر"] == month) & (pay_df["الطالبة"] == sel) &
-                                   (pay_df["رقم الفاتورة"] == r["رقم الفاتورة"]),
-                                   ["المدفوع", "المتبقي", "حالة الدفع", "تاريخ آخر دفعة", "ملاحظات"]] = \
-                            [new_paid, max(new_rem, 0), new_status, str(date.today()), note]
-                        save_df("payments", pay_df)
-
-                        trans_df = load_df("transactions")
-                        trans_df.loc[len(trans_df)] = [str(date.today()), month, sel, amt, method, note]
-                        save_df("transactions", trans_df)
-
-                        st.success(f"✅ تم تسجيل دفعة بقيمة {money(amt)} ({method}) للطالبة {sel}.")
-                        st.rerun()
-
-    with t3:
-        if pay_df.empty:
-            st.info("لا توجد فواتير.")
-        else:
-            month = st.selectbox("الشهر", sorted(pay_df["الشهر"].unique().tolist(), reverse=True), key="view_month")
-            view = pay_df[pay_df["الشهر"] == month].copy()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("💰 إجمالي المطلوب", money(view["المبلغ المطلوب"].sum()))
-            c2.metric("✅ المحصّل", money(view["المدفوع"].sum()))
-            c3.metric("📈 نسبة التحصيل",
-                      f"{round(view['المدفوع'].sum() / view['المبلغ المطلوب'].sum() * 100, 1) if view['المبلغ المطلوب'].sum() else 0}%")
-            status_filter = st.multiselect("تصفية حسب حالة الدفع", ["مدفوع", "جزئي", "غير مدفوع"])
-            if status_filter:
-                view = view[view["حالة الدفع"].isin(status_filter)]
-            st.dataframe(view, use_container_width=True, hide_index=True)
-
-    with t4:
-        if pay_df.empty:
-            st.info("لا توجد فواتير.")
-        else:
-            sel = st.selectbox("اختر الطالبة", sorted(pay_df["الطالبة"].unique().tolist()), key="stmt_student")
-            section_title(f"🧾 كشف حساب: {sel}")
-            history = pay_df[pay_df["الطالبة"] == sel].sort_values("الشهر")
-            if not history.empty:
-                st.dataframe(history[["رقم الفاتورة", "الشهر", "المبلغ المطلوب", "المدفوع",
-                                      "المتبقي", "حالة الدفع", "تاريخ آخر دفعة"]],
-                             use_container_width=True, hide_index=True)
-                tc1, tc2, tc3 = st.columns(3)
-                tc1.metric("💰 إجمالي المطلوب", money(history["المبلغ المطلوب"].sum()))
-                tc2.metric("✅ إجمالي المدفوع", money(history["المدفوع"].sum()))
-                tc3.metric("⏳ الرصيد المتبقي", money(max(history["المتبقي"].sum(), 0)))
-            else:
-                st.info("لا توجد فواتير لهذه الطالبة.")
-
-            trans_df = load_df("transactions")
-            if not trans_df.empty:
-                section_title("💵 سجل الحركات المالية")
-                st.dataframe(trans_df[trans_df["الطالبة"] == sel].sort_values("التاريخ", ascending=False),
-                             use_container_width=True, hide_index=True)
+                st.error("الاسم والجوال إلزاميان.")
+    if not drivers_df.empty:
+        st.dataframe(drivers_df, use_container_width=True, hide_index=True)
+        sel = st.selectbox("حذف سائق", drivers_df["السائق"].tolist())
+        if st.button("🗑️ حذف السائق"):
+            save_df("drivers", drivers_df[drivers_df["السائق"] != sel])
+            st.rerun()
 
 
 # ============================================================
-#  8) التقارير الشاملة
+#  4) المركبات
 # ============================================================
-elif choice == "📈 التقارير الشاملة":
-    att_df, pay_df = load_df("attendance"), load_df("payments")
-    section_title("📈 التقارير الشاملة")
-    tab1, tab2, tab3 = st.tabs(["💰 التقرير المالي", "✅ تقرير الحضور", "⬇️ تصدير البيانات"])
+elif choice == "🚗 المركبات":
+    vehicles_df = load_df("vehicles")
+    section_title("🚗 سجل المركبات")
+    with st.form("add_veh", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        name = c1.text_input("اسم المركبة *", placeholder="حافلة ١")
+        plate = c2.text_input("اللوحة")
+        cap = c3.number_input("السعة", min_value=1, max_value=80, value=15)
+        if st.form_submit_button("💾 حفظ"):
+            if name:
+                vehicles_df.loc[len(vehicles_df)] = [name, plate, cap]
+                save_df("vehicles", vehicles_df)
+                st.success(f"✅ تم حفظ {name}")
+                st.rerun()
+            else:
+                st.error("اسم المركبة إلزامي.")
+    if not vehicles_df.empty:
+        st.dataframe(vehicles_df, use_container_width=True, hide_index=True)
+        sel = st.selectbox("حذف مركبة", vehicles_df["المركبة"].tolist())
+        if st.button("🗑️ حذف المركبة"):
+            save_df("vehicles", vehicles_df[vehicles_df["المركبة"] != sel])
+            st.rerun()
 
-    with tab1:
-        if pay_df.empty:
-            st.info("لا توجد بيانات مالية.")
-        else:
-            section_title("ملخص التحصيل الشهري")
-            fin = pay_df.groupby("الشهر").agg(
-                المطلوب=("المبلغ المطلوب", "sum"),
-                المحصل=("المدفوع", "sum"),
-                الفواتير=("الطالبة", "count"),
-                المسددة=("حالة الدفع", lambda x: (x == "مدفوع").sum()),
-            ).reset_index()
-            fin["المتبقي"] = fin["المطلوب"] - fin["المحصل"]
-            fin["نسبة التحصيل %"] = (fin["المحصل"] / fin["المطلوب"] * 100).round(1)
-            st.dataframe(fin.sort_values("الشهر", ascending=False), use_container_width=True, hide_index=True)
-            st.bar_chart(fin.set_index("الشهر")[["المحصل", "المتبقي"]])
 
-            section_title("أكثر الطالبات تأخرًا")
-            late = pay_df[pay_df["حالة الدفع"] != "مدفوع"].groupby("الطالبة").agg(
-                عدد_الأشهر_المتأخرة=("الشهر", "count"),
-                إجمالي_المتبقي=("المتبقي", "sum")).reset_index().sort_values("إجمالي_المتبقي", ascending=False)
-            st.dataframe(late, use_container_width=True, hide_index=True) if not late.empty else st.success("🎉 لا توجد متأخرات.")
+# ============================================================
+#  5) أرشيف الرحلات
+# ============================================================
+elif choice == "🗂️ أرشيف الرحلات":
+    trips_df = load_df("trips")
+    section_title("🗂️ أرشيف الرحلات — من ركب مع أي سائق ومتى")
+    if trips_df.empty:
+        st.info("لا توجد رحلات مؤرشفة.")
+    else:
+        dates = sorted(trips_df["التاريخ"].unique().tolist(), reverse=True)
+        d = st.selectbox("التاريخ", dates)
+        day = trips_df[trips_df["التاريخ"] == d]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🚐 المركبات", day["المركبة"].nunique())
+        c2.metric("👩‍🎓 الطالبات المنقولات", len(day))
+        c3.metric("🧑‍✈️ السائقون", day["السائق"].nunique())
+        st.dataframe(day.sort_values(["المركبة", "الترتيب"]), use_container_width=True, hide_index=True)
+        for veh, grp in day.groupby("المركبة"):
+            st.download_button(f"⬇️ تصدير رحلة {veh} — {d}",
+                               grp.to_csv(index=False).encode("utf-8-sig"),
+                               f"trip_{d}_{veh}.csv", "text/csv")
 
-    with tab2:
-        if att_df.empty:
-            st.info("لا توجد سجلات حضور.")
-        else:
-            att_df = att_df.copy()
-            att_df["التاريخ"] = pd.to_datetime(att_df["التاريخ"])
-            c1, c2 = st.columns(2)
-            d1 = c1.date_input("من تاريخ", value=att_df["التاريخ"].min().date())
-            d2 = c2.date_input("إلى تاريخ", value=att_df["التاريخ"].max().date())
-            period = att_df[(att_df["التاريخ"] >= pd.Timestamp(d1)) & (att_df["التاريخ"] <= pd.Timestamp(d2))]
-
-            section_title("الحضور حسب المسار")
-            st.dataframe(period.groupby(["المسار", "الحالة"]).size().unstack(fill_value=0), use_container_width=True)
-
-            section_title("نسبة الحضور لكل طالبة")
-            per = period.groupby("الطالبة")["الحالة"].agg(
-                حضور=lambda x: (x == "حاضرة").sum(),
-                غياب=lambda x: (x == "غائبة").sum(),
-                اعتذار=lambda x: (x == "معتذرة").sum()).reset_index()
-            per["إجمالي"] = per["حضور"] + per["غياب"] + per["اعتذار"]
-            per["نسبة الحضور %"] = (per["حضور"] / per["إجمالي"] * 100).round(1)
-            st.dataframe(per.sort_values("نسبة الحضور %"), use_container_width=True, hide_index=True)
-
-    with tab3:
-        for key, label in [("buses", "الحافلات"), ("drivers", "السائقون"), ("routes", "المسارات"),
-                           ("students", "الطالبات"), ("attendance", "الحضور"),
-                           ("payments", "الاشتراكات"), ("transactions", "الحركات المالية")]:
-            df = load_df(key)
-            if not df.empty:
-                st.download_button(f"⬇️ تصدير {label}", df.to_csv(index=False).encode("utf-8-sig"),
-                                   f"{key}_report.csv", "text/csv")
-
-st.markdown('<div class="app-footer">🚌 نظام إدارة نقل الطالبات — الإصدار 2.1</div>', unsafe_allow_html=True)
+st.markdown('<div style="color:#9ca3af;font-size:.8rem;text-align:center;margin-top:40px;">🚌 نظام تشغيل نقل الطالبات — الإصدار 3.0</div>', unsafe_allow_html=True)
