@@ -1,51 +1,57 @@
-alkhaled_transport_system_v1.py
+import streamlit as st
+import pandas as pd
 
-نظام احترافي أولي (Backend API)
+# ضبط إعدادات الصفحة
+st.set_page_config(
+    page_title="نظام إدارة نقل الطالبات",
+    page_icon="🚌",
+    layout="wide"
+)
 
-FastAPI + SQLAlchemy + Auth + PostgreSQL-ready
+st.title("🚌 نظام إدارة حافلات وسائقين النقل")
 
-from fastapi import FastAPI, Depends, HTTPException from fastapi.security import OAuth2PasswordBearer from pydantic import BaseModel from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session from datetime import datetime
+# القائمة الجانبية للتنقل
+menu = ["لوحة التحكم", "إدارة السائقين", "إدارة الطالبات والمسارات", "التقارير اليومية"]
+choice = st.sidebar.selectbox("القائمة الرئيسية", menu)
 
-DATABASE_URL = "sqlite:///./alkhaled.db"  # قابل للتحويل إلى PostgreSQL
+# 1. لوحة التحكم
+if choice == "لوحة التحكم":
+    st.subheader("ملخص العمليات اليومية")
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric(label="إجمالي السائقين", value="3")
+    col2.metric(label="إجمالي الحافلات (H1)", value="3")
+    col3.metric(label="الوجهات الرئيسية", value="الكلية التقنية - ديراب")
+    
+    st.markdown("---")
+    st.write("### حالة الجولات اليومية")
+    status_df = pd.DataFrame({
+        "السائق": ["السائق 1", "السائق 2", "السائق 3"],
+        "المسار / المنطقة": ["شمال الرياض", "شرق الرياض", "وسط الرياض"],
+        "حالة الجولة": ["مكتملة", "قيد التنفيذ", "جاهز"]
+    })
+    st.dataframe(status_df, use_container_width=True)
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}) SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine) Base = declarative_base()
+# 2. إدارة السائقين
+elif choice == "إدارة السائقين":
+    st.subheader("إدارة بيانات السائقين والحافلات")
+    
+    with st.form("add_driver_form"):
+        st.write("إضافة سائق جديد")
+        driver_name = st.text_input("اسم السائق")
+        phone = st.text_input("رقم التواصل")
+        plate_no = st.text_input("رقم لوحة الحافلة (H1)")
+        submitted = st.form_submit_button("حفظ البيانات")
+        
+        if submitted:
+            st.success(f"تم حفظ بيانات السائق {driver_name} بنجاح!")
 
--------------------- Models --------------------
+# 3. إدارة الطالبات والمسارات
+elif choice == "إدارة الطالبات والمسارات":
+    st.subheader("سجل الطالبات والمسارات")
+    st.info("يمكنك تنظيم اشتراكات ومواقع الطالبات حسب الأحياء والمسارات.")
 
-class Student(Base): tablename = "students" id = Column(Integer, primary_key=True) name = Column(String, nullable=False) phone = Column(String, unique=True, nullable=False) district = Column(String) lat = Column(Float) lon = Column(Float) payments = relationship("Payment", back_populates="student")
-
-class Driver(Base): tablename = "drivers" id = Column(Integer, primary_key=True) name = Column(String) phone = Column(String)
-
-class Bus(Base): tablename = "buses" id = Column(Integer, primary_key=True) plate = Column(String) capacity = Column(Integer)
-
-class Trip(Base): tablename = "trips" id = Column(Integer, primary_key=True) bus_id = Column(Integer, ForeignKey("buses.id")) driver_id = Column(Integer, ForeignKey("drivers.id")) route = Column(String) date = Column(DateTime, default=datetime.utcnow)
-
-class Payment(Base): tablename = "payments" id = Column(Integer, primary_key=True) student_id = Column(Integer, ForeignKey("students.id")) amount = Column(Float) method = Column(String) date = Column(DateTime, default=datetime.utcnow) student = relationship("Student", back_populates="payments")
-
--------------------- Schemas --------------------
-
-class StudentCreate(BaseModel): name: str phone: str district: str | None = None lat: float | None = None lon: float | None = None
-
-class PaymentCreate(BaseModel): student_id: int amount: float method: str
-
--------------------- App --------------------
-
-app = FastAPI(title="Alkhaled Transport System API")
-
-Base.metadata.create_all(bind=engine)
-
-def get_db(): db = SessionLocal() try: yield db finally: db.close()
-
--------------------- Endpoints --------------------
-
-@app.post("/students") def create_student(data: StudentCreate, db: Session = Depends(get_db)): student = Student(**data.dict()) db.add(student) db.commit() db.refresh(student) return student
-
-@app.get("/students") def get_students(db: Session = Depends(get_db)): return db.query(Student).all()
-
-@app.post("/payments") def add_payment(data: PaymentCreate, db: Session = Depends(get_db)): pay = Payment(**data.dict()) db.add(pay) db.commit() db.refresh(pay) return pay
-
-@app.get("/analytics/finance") def finance_analytics(db: Session = Depends(get_db)): payments = db.query(Payment).all() total = sum([p.amount for p in payments]) return { "total_income": total, "payments_count": len(payments) }
-
--------------------- Run --------------------
-
-uvicorn alkhaled_transport_system_v1:app --reload
+# 4. التقارير
+elif choice == "التقارير اليومية":
+    st.subheader("التقارير والسجلات")
+    st.write("متابعة الحضور والغياب واشتراكات النقل.")
