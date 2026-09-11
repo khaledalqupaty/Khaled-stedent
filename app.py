@@ -1,14 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-🚌 نظام إدارة نقل الطالبات الاحترافي — الإصدار 2.0
-جديد في هذا الإصدار:
-  • ترحيل تلقائي للملفات القديمة (إضافة الأعمدة الجديدة دون فقدان البيانات)
-  • أرقام فواتير تلقائية (INV-2026-09-00001) — عدّاد مستقل لكل شهر
-  • سجل حركات مالي كامل (transactions.csv) مع طريقة الدفع
-  • منع الدفع الزائد + بطاقات metrics في شاشة الدفع
-  • كشف حساب كامل لكل طالبة (فواتير + حركات)
-  • بحث فوري عن الطالبات + نسبة إشغال الحافلات (مُصلحة)
-  • إصلاح حذف الحضور (لم يعد يمسح مسارات أخرى من نفس اليوم)
+🚌 نظام إدارة نقل الطالبات الاحترافي — الإصدار 2.1
+• إصلاح توافق pandas 3.x (Streamlit Cloud / Python 3.13)
+• واجهة بصرية جديدة بالكامل
+• ترحيل تلقائي للملفات القديمة + أرقام فواتير + سجل مالي + كشوف حسابات
 التشغيل: streamlit run school_transport_pro_v2.py
 """
 import os
@@ -18,7 +13,7 @@ import streamlit as st
 from datetime import date
 
 # ============================================================
-#  الإعدادات العامة وقاعدة البيانات (CSV)
+#  قاعدة البيانات (CSV)
 # ============================================================
 DATA_DIR = "data"
 FILES = {
@@ -32,10 +27,11 @@ FILES = {
 }
 PAY_METHODS = ["نقدي", "تحويل بنكي", "مدى", "STC Pay"]
 STATUSES = ["حاضرة", "غائبة", "معتذرة"]
+MONEY_COLS = {"المبلغ المطلوب", "المدفوع", "المتبقي", "المبلغ", "السعة", "الاشتراك الشهري"}
 
 
 def init_data():
-    """إنشاء الملفات الناقصة + ترحيل الملفات القديمة تلقائيًا."""
+    """إنشاء الملفات الناقصة + ترحيل الملفات القديمة تلقائيًا دون فقدان بيانات."""
     os.makedirs(DATA_DIR, exist_ok=True)
     for fname, cols in FILES.values():
         path = os.path.join(DATA_DIR, fname)
@@ -45,18 +41,15 @@ def init_data():
         df = pd.read_csv(path, encoding="utf-8-sig")
         changed = False
 
-        # إعادة تسمية الأعمدة القديمة
         if fname == FILES["drivers"][0] and "اللوحة الم assigned" in df.columns and "اللوحة المخصصة" not in df.columns:
             df = df.rename(columns={"اللوحة الم assigned": "اللوحة المخصصة"})
             changed = True
 
-        # إضافة الأعمدة الناقصة
         for c in cols:
             if c not in df.columns:
                 df[c] = ""
                 changed = True
 
-        # ترحيل: ترقيم الفواتير القديمة فاقدة الأرقام
         if fname == FILES["payments"][0] and not df.empty:
             mask = df["رقم الفاتورة"].astype(str).str.strip().isin(["", "nan", "None"])
             if mask.any():
@@ -67,24 +60,25 @@ def init_data():
                     df.at[idx, "رقم الفاتورة"] = f"INV-{m}-{counters[m]:05d}"
                 changed = True
 
-        # ترتيب الأعمدة حسب التعريف الحالي
         df = df[cols]
         if changed:
             df.to_csv(path, index=False, encoding="utf-8-sig")
 
 
 def load_df(key):
+    """تحميل مع حماية كاملة من أخطاء الأنواع في pandas 3.x."""
     path = os.path.join(DATA_DIR, FILES[key][0])
     if not os.path.exists(path):
         return pd.DataFrame(columns=FILES[key][1])
     df = pd.read_csv(path, encoding="utf-8-sig")
-    if key == "payments":
-        for col in ["المبلغ المطلوب", "المدفوع", "المتبقي"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    if key == "transactions":
-        if "المبلغ" in df.columns:
-            df["المبلغ"] = pd.to_numeric(df["المبلغ"], errors="coerce").fillna(0)
+
+    for col in MONEY_COLS & set(df.columns):
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    # ⚠️ pandas 3.x: أي عمود رقمي "فارغ" يجب تحويله لنص قبل إدخال قيم نصية فيه
+    for col in df.columns:
+        if col not in MONEY_COLS and pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].astype("object")
     return df
 
 
@@ -102,9 +96,9 @@ def money(x):
 def next_invoice_id(pay_df, month):
     """رقم فاتورة تالٍ داخل الشهر — لا يتكرر حتى بعد حذف فواتير."""
     pref = f"INV-{month}-"
-    seqs = (pay_df["رقم الفاتورة"].astype(str)
-            .str.replace(pref, "", regex=False)
-            .pipe(pd.to_numeric, errors="coerce"))
+    seqs = pd.to_numeric(
+        pay_df["رقم الفاتورة"].astype(str).str.replace(pref, "", regex=False),
+        errors="coerce")
     seq = seqs.max()
     return f"{pref}{(int(seq) if pd.notna(seq) else 0) + 1:05d}"
 
@@ -112,22 +106,108 @@ def next_invoice_id(pay_df, month):
 init_data()
 
 # ============================================================
-#  إعدادات الصفحة والتنسيق
+#  إعدادات الصفحة + التصميم البصري
 # ============================================================
-st.set_page_config(page_title="نظام إدارة نقل الطالبات الاحترافي", page_icon="🚌", layout="wide")
+st.set_page_config(page_title="نظام إدارة نقل الطالبات", page_icon="🚌",
+                   layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
-    .block-container { padding-top: 1rem; }
-    div[data-testid="stMetricValue"] { font-size: 1.6rem; }
-    .success-card  { background: #dff5e8; padding: 15px; border-radius: 12px; }
-    .warning-card  { background: #fff3cd; padding: 15px; border-radius: 12px; }
-    .danger-card   { background: #f8d7da; padding: 15px; border-radius: 12px; }
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
+    html, body, [class*="css"], .stMarkdown, label, input, select, textarea {
+        font-family: 'Tajawal', sans-serif !important;
+    }
+    .block-container { padding-top: 1.2rem; max-width: 1200px; }
+
+    /* الترويسة المتدرجة */
+    .hero {
+        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 55%, #06b6d4 100%);
+        padding: 26px 32px; border-radius: 18px; margin-bottom: 18px;
+        box-shadow: 0 10px 30px rgba(30, 58, 138, .28);
+    }
+    .hero-title { color: #fff; font-size: 1.9rem; font-weight: 800; }
+    .hero-sub { color: #dbeafe; font-size: .95rem; margin-top: 6px; }
+
+    /* عناوين الأقسام */
+    .section-title {
+        font-size: 1.15rem; font-weight: 800; color: #1e3a8a;
+        border-right: 5px solid #3b82f6; padding-right: 12px;
+        margin: 18px 0 10px;
+    }
+
+    /* بطاقات المؤشرات */
+    div[data-testid="stMetric"] {
+        background: #ffffff; border: 1px solid #e5e7eb;
+        border-radius: 14px; padding: 14px 18px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.05);
+        transition: transform .15s ease, box-shadow .15s ease;
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 18px rgba(59,130,246,.15);
+        border-color: #bfdbfe;
+    }
+    div[data-testid="stMetricLabel"] { color: #6b7280; font-size: .9rem; }
+    div[data-testid="stMetricValue"] { color: #1e3a8a; font-size: 1.55rem; font-weight: 800; }
+
+    /* الأزرار */
+    .stButton > button {
+        border-radius: 10px; font-weight: 700; border: none;
+        background: linear-gradient(135deg, #2563eb, #3b82f6);
+        color: #fff; padding: .45rem 1.2rem;
+        box-shadow: 0 3px 10px rgba(37,99,235,.3);
+        transition: all .15s ease;
+    }
+    .stButton > button:hover { background: linear-gradient(135deg, #1d4ed8, #2563eb);
+        box-shadow: 0 5px 16px rgba(37,99,235,.4); }
+
+    /* التبويبات */
+    .stTabs [data-baseweb="tab-list"] { gap: 6px; }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px 10px 0 0; font-weight: 700; padding: 8px 18px;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #eff6ff; color: #1d4ed8; border-bottom: 3px solid #3b82f6;
+    }
+
+    /* النماذج */
+    div[data-testid="stForm"] {
+        border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px;
+        background: #fafbfd;
+    }
+
+    /* الشريط الجانبي */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+    }
+    .sidebar-box {
+        background: #fff; border-radius: 12px; padding: 14px;
+        border: 1px solid #e0e7ff; box-shadow: 0 2px 8px rgba(99,102,241,.08);
+    }
+    .sidebar-box b { color: #1e3a8a; }
+
+    /* بطاقات الحالة */
+    .success-card { background: #dff5e8; padding: 15px; border-radius: 12px; border-right: 4px solid #16a34a; }
+    .warning-card { background: #fff3cd; padding: 15px; border-radius: 12px; border-right: 4px solid #d97706; }
+    .danger-card  { background: #f8d7da; padding: 15px; border-radius: 12px; border-right: 4px solid #dc2626; }
+
+    /* تذييل */
+    footer, #MainMenu { visibility: hidden; }
+    .app-footer { color: #9ca3af; font-size: .8rem; text-align: center; margin-top: 40px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚌 نظام إدارة نقل الطالبات الاحترافي")
-st.caption("الإصدار 2.0 — فواتير مرقّمة • سجل مالي • كشوف حسابات • إشغال الحافلات")
+
+def section_title(text):
+    st.markdown(f'<div class="section-title">{text}</div>', unsafe_allow_html=True)
+
+
+st.markdown("""
+<div class="hero">
+    <div class="hero-title">🚌 نظام إدارة نقل الطالبات الاحترافي</div>
+    <div class="hero-sub">الإصدار 2.1 &nbsp;•&nbsp; فواتير مرقّمة &nbsp;•&nbsp; سجل مالي &nbsp;•&nbsp; كشوف حسابات &nbsp;•&nbsp; إشغال الحافلات</div>
+</div>
+""", unsafe_allow_html=True)
 
 menu = [
     "📊 لوحة التحكم",
@@ -140,13 +220,18 @@ menu = [
     "📈 التقارير الشاملة",
 ]
 choice = st.sidebar.selectbox("القائمة الرئيسية", menu)
+st.sidebar.markdown("""
+<div class="sidebar-box">
+    <b>💡 نصيحة سريعة</b><br>
+    ولّد فواتير كل شهر من تبويب «الاشتراكات» ثم سجّل الدفعات مع طريقة الدفع — يُحفظ كل شيء تلقائيًا في السجل المالي.
+</div>
+""", unsafe_allow_html=True)
 
 
 # ============================================================
 #  1) لوحة التحكم
 # ============================================================
 if choice == "📊 لوحة التحكم":
-    st.subheader("📊 ملخص العمليات")
     buses_df, drivers_df = load_df("buses"), load_df("drivers")
     routes_df, students_df = load_df("routes"), load_df("students")
     att_df, pay_df = load_df("attendance"), load_df("payments")
@@ -162,6 +247,7 @@ if choice == "📊 لوحة التحكم":
     remaining = required - paid_amt
     rate = round(paid_amt / required * 100, 1) if required else 0
 
+    section_title("📊 ملخص العمليات")
     row = st.columns(4)
     row[0].metric("🚌 الحافلات", len(buses_df))
     row[1].metric("🧑‍✈️ السائقون", len(drivers_df))
@@ -178,7 +264,7 @@ if choice == "📊 لوحة التحكم":
     left, right = st.columns(2)
 
     with left:
-        st.write("### 🗺️ حالة الجولات اليومية")
+        section_title("🗺️ حالة الجولات اليومية")
         if not routes_df.empty:
             disp = routes_df.copy()
             disp["عدد الطالبات"] = disp["المسار"].map(
@@ -187,7 +273,6 @@ if choice == "📊 لوحة التحكم":
             disp["حاضرات اليوم"] = disp["المسار"].map(
                 today_att[today_att["الحالة"] == "حاضرة"].groupby("المسار").size() if not today_att.empty else {}
             ).fillna(0).astype(int)
-            # نسبة الإشغال (مصححة: لا قسمة على صفر ولا inf)
             cap = disp["اللوحة"].map(buses_df.set_index("لوحة الحافلة")["السعة"]) if not buses_df.empty else pd.Series(np.nan, index=disp.index)
             disp["نسبة الإشغال %"] = (disp["عدد الطالبات"] / cap.replace(0, np.nan) * 100).fillna(0).round(1)
             st.dataframe(disp, use_container_width=True, hide_index=True)
@@ -195,7 +280,7 @@ if choice == "📊 لوحة التحكم":
             st.info("لم تُعرّف مسارات بعد.")
 
     with right:
-        st.write("### ✅ حضور اليوم")
+        section_title("✅ حضور اليوم")
         if not today_att.empty:
             c1, c2, c3 = st.columns(3)
             c1.metric("🟢 حاضرات", len(today_att[today_att["الحالة"] == "حاضرة"]))
@@ -204,12 +289,13 @@ if choice == "📊 لوحة التحكم":
         else:
             st.info("لم يُسجّل حضور اليوم بعد.")
 
-        st.write("### 💳 متأخرات السداد")
+        section_title("💳 متأخرات السداد")
         if not month_pay.empty:
             late = month_pay[month_pay["حالة الدفع"] != "مدفوع"]
             st.metric("طالبات عليهن مستحقات", len(late))
             if not late.empty:
-                st.dataframe(late[["رقم الفاتورة", "الطالبة", "المتبقي", "حالة الدفع"]], use_container_width=True, hide_index=True)
+                st.dataframe(late[["رقم الفاتورة", "الطالبة", "المتبقي", "حالة الدفع"]],
+                             use_container_width=True, hide_index=True)
         else:
             st.info(f"لم تُولّد فواتير شهر {cur_month} بعد — من قائمة الاشتراكات.")
 
@@ -218,20 +304,21 @@ if choice == "📊 لوحة التحكم":
 #  2) إدارة الحافلات
 # ============================================================
 elif choice == "🚌 إدارة الحافلات":
-    st.subheader("🚌 سجل الحافلات")
     buses_df = load_df("buses")
+    section_title("🚌 سجل الحافلات")
     t1, t2, t3 = st.tabs(["➕ إضافة حافلة", "✏️ تعديل", "🗑️ حذف"])
 
     with t1:
         with st.form("add_bus", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            plate = c1.text_input("رقم اللوحة (H1)")
+            plate = c1.text_input("رقم اللوحة")
             btype = c2.selectbox("نوع الحافلة", ["حافلة صغيرة", "حافلة متوسطة", "حافلة كبيرة", "فان", "أخرى"])
-            cap = st.number_input("السعة (عدد المقاعد)", min_value=1, max_value=80, value=30)
-            status = st.selectbox("حالة الحافلة", ["جاهزة", "في الصيانة", "خارج الخدمة"])
+            c3, c4 = st.columns(2)
+            cap = c3.number_input("السعة (عدد المقاعد)", min_value=1, max_value=80, value=30)
+            status = c4.selectbox("حالة الحافلة", ["جاهزة", "في الصيانة", "خارج الخدمة"])
             if st.form_submit_button("💾 حفظ الحافلة"):
                 if plate:
-                    if not buses_df.empty and plate in buses_df["لوحة الحافلة"].values:
+                    if not buses_df.empty and plate in buses_df["لوحة الحافلة"].astype(str).values:
                         st.warning("هذه اللوحة مسجلة مسبقًا!")
                     else:
                         buses_df.loc[len(buses_df)] = [plate, btype, cap, status, str(date.today())]
@@ -251,8 +338,8 @@ elif choice == "🚌 إدارة الحافلات":
                 c1, c2 = st.columns(2)
                 opts = ["حافلة صغيرة", "حافلة متوسطة", "حافلة كبيرة", "فان", "أخرى"]
                 bt = c1.selectbox("النوع", opts, index=opts.index(r["نوع الحافلة"]) if r["نوع الحافلة"] in opts else 4)
-                cp = c2.number_input("السعة", min_value=1, max_value=80, value=int(r["السعة"]))
                 st_opts = ["جاهزة", "في الصيانة", "خارج الخدمة"]
+                cp = c2.number_input("السعة", min_value=1, max_value=80, value=int(r["السعة"]))
                 stt = st.selectbox("الحالة", st_opts, index=st_opts.index(r["الحالة"]) if r["الحالة"] in st_opts else 0)
                 if st.form_submit_button("✏️ تحديث"):
                     buses_df.loc[buses_df["لوحة الحافلة"] == sel, ["نوع الحافلة", "السعة", "الحالة"]] = [bt, cp, stt]
@@ -270,8 +357,7 @@ elif choice == "🚌 إدارة الحافلات":
                 st.success("✅ تم الحذف.")
                 st.rerun()
 
-    st.markdown("---")
-    st.write("### قائمة الحافلات")
+    section_title("📋 قائمة الحافلات")
     st.dataframe(buses_df, use_container_width=True, hide_index=True) if not buses_df.empty else st.info("لا توجد بيانات.")
 
 
@@ -279,10 +365,9 @@ elif choice == "🚌 إدارة الحافلات":
 #  3) إدارة السائقين
 # ============================================================
 elif choice == "🧑‍✈️ إدارة السائقين":
-    st.subheader("🧑‍✈️ سجل السائقين")
     drivers_df, buses_df = load_df("drivers"), load_df("buses")
     plates = buses_df["لوحة الحافلة"].tolist() if not buses_df.empty else []
-
+    section_title("🧑‍✈️ سجل السائقين")
     t1, t2, t3 = st.tabs(["➕ إضافة سائق", "✏️ تعديل", "🗑️ حذف"])
 
     with t1:
@@ -330,8 +415,7 @@ elif choice == "🧑‍✈️ إدارة السائقين":
                 st.success("✅ تم الحذف.")
                 st.rerun()
 
-    st.markdown("---")
-    st.write("### قائمة السائقين")
+    section_title("📋 قائمة السائقين")
     st.dataframe(drivers_df, use_container_width=True, hide_index=True) if not drivers_df.empty else st.info("لا توجد بيانات.")
 
 
@@ -339,10 +423,10 @@ elif choice == "🧑‍✈️ إدارة السائقين":
 #  4) إدارة المسارات
 # ============================================================
 elif choice == "🗺️ إدارة المسارات":
-    st.subheader("🗺️ المسارات والمناطق")
     routes_df, drivers_df, buses_df = load_df("routes"), load_df("drivers"), load_df("buses")
     drv_list = drivers_df["السائق"].tolist() if not drivers_df.empty else []
     plt_list = buses_df["لوحة الحافلة"].tolist() if not buses_df.empty else []
+    section_title("🗺️ المسارات والمناطق")
 
     with st.form("add_route", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns(4)
@@ -363,7 +447,7 @@ elif choice == "🗺️ إدارة المسارات":
                 st.error("اسم المسار والمنطقة إلزاميان.")
 
     if not routes_df.empty:
-        st.write("### المسارات المسجلة")
+        section_title("📋 المسارات المسجلة")
         st.dataframe(routes_df, use_container_width=True, hide_index=True)
         sel = st.selectbox("اختر مسارًا للحذف", routes_df["المسار"].tolist())
         if st.button("🗑️ حذف المسار"):
@@ -378,12 +462,11 @@ elif choice == "🗺️ إدارة المسارات":
 #  5) إدارة الطالبات
 # ============================================================
 elif choice == "👩‍🎓 إدارة الطالبات":
-    st.subheader("👩‍🎓 سجل الطالبات")
     students_df, routes_df, buses_df = load_df("students"), load_df("routes"), load_df("buses")
     route_list = routes_df["المسار"].tolist() if not routes_df.empty else []
     plt_list = buses_df["لوحة الحافلة"].tolist() if not buses_df.empty else []
-
-    t1, t2, t3 = st.tabs(["➕ إضافة طالبة", "✏️ تعديل / 🗑️ حذف", "📋 القائمة"])
+    section_title("👩‍🎓 سجل الطالبات")
+    t1, t2, t3 = st.tabs(["➕ إضافة طالبة", "✏️ تعديل / 🗑️ حذف", "📋 القائمة والبحث"])
 
     with t1:
         if not route_list:
@@ -424,8 +507,9 @@ elif choice == "👩‍🎓 إدارة الطالبات":
                 pl = (st.selectbox("الحافلة", plt_list,
                                    index=plt_list.index(r["اللوحة"]) if r["اللوحة"] in plt_list else 0)
                       if plt_list else st.text_input("اللوحة", value=str(r["اللوحة"])))
-                sb = st.number_input("الاشتراك الشهري", min_value=0, value=int(r["الاشتراك الشهري"]))
-                stt = st.selectbox("الحالة", ["نشطة", "موقوفة"], index=0 if r["الحالة"] == "نشطة" else 1)
+                c5, c6 = st.columns(2)
+                sb = c5.number_input("الاشتراك الشهري", min_value=0, value=int(r["الاشتراك الشهري"]))
+                stt = c6.selectbox("الحالة", ["نشطة", "موقوفة"], index=0 if r["الحالة"] == "نشطة" else 1)
                 cu, cd = st.columns(2)
                 upd = cu.form_submit_button("✏️ تحديث")
                 dele = cd.form_submit_button("🗑️ حذف الطالبة")
@@ -460,15 +544,16 @@ elif choice == "👩‍🎓 إدارة الطالبات":
 #  6) الحضور اليومي
 # ============================================================
 elif choice == "✅ الحضور اليومي":
-    st.subheader("✅ تسجيل حضور الجولة")
     students_df, att_df = load_df("students"), load_df("attendance")
     active = students_df[students_df["الحالة"] == "نشطة"] if not students_df.empty else students_df
+    section_title("✅ تسجيل حضور الجولة")
 
     if active.empty:
         st.info("لا توجد طالبات نشطات — أضف طالبات أولًا.")
     else:
-        att_date = st.date_input("تاريخ الجولة", value=date.today())
-        route_filter = st.selectbox("المسار", ["الكل"] + sorted(active["المسار"].unique().tolist()))
+        c1, c2 = st.columns(2)
+        att_date = c1.date_input("تاريخ الجولة", value=date.today())
+        route_filter = c2.selectbox("المسار", ["الكل"] + sorted(active["المسار"].unique().tolist()))
         group = active if route_filter == "الكل" else active[active["المسار"] == route_filter]
 
         existing = att_df[att_df["التاريخ"] == str(att_date)] if not att_df.empty else pd.DataFrame()
@@ -486,7 +571,6 @@ elif choice == "✅ الحضور اليومي":
                 key=f"att_{att_date}_{r['الطالبة']}")
 
         if st.button("💾 حفظ سجل الحضور"):
-            # إصلاح: نحذف فقط سجلات الطالبات المعروضات، لا كامل يوم كامل
             names = list(statuses.keys())
             att_df = att_df[~((att_df["التاريخ"] == str(att_date)) & (att_df["الطالبة"].isin(names)))] \
                 if not att_df.empty else att_df
@@ -503,11 +587,10 @@ elif choice == "✅ الحضور اليومي":
 #  7) الاشتراكات الشهرية وحالة الدفع
 # ============================================================
 elif choice == "💳 الاشتراكات الشهرية":
-    st.subheader("💳 الاشتراكات الشهرية وتتبع الدفع")
     students_df, pay_df = load_df("students"), load_df("payments")
     active = students_df[students_df["الحالة"] == "نشطة"] if not students_df.empty else students_df
-
-    t1, t2, t3, t4 = st.tabs(["🧾 توليد فواتير الشهر", "💵 تسجيل دفعة", "📋 حالة الدفع", "🧾 كشف حساب طالبة"])
+    section_title("💳 الاشتراكات الشهرية وتتبع الدفع")
+    t1, t2, t3, t4 = st.tabs(["🧾 توليد فواتير", "💵 تسجيل دفعة", "📋 حالة الدفع", "🧾 كشف حساب طالبة"])
 
     with t1:
         cur_month = date.today().strftime("%Y-%m")
@@ -539,12 +622,11 @@ elif choice == "💳 الاشتراكات الشهرية":
                 sel = st.selectbox("اختر الطالبة", unpaid["الطالبة"].tolist())
                 r = unpaid[unpaid["الطالبة"] == sel].iloc[0]
 
-                # بطاقات ملخص الفاتورة
                 col1, col2, col3 = st.columns(3)
                 col1.metric("💰 المطلوب", money(r["المبلغ المطلوب"]))
                 col2.metric("✅ المدفوع", money(r["المدفوع"]))
                 col3.metric("⏳ المتبقي", money(r["المتبقي"]))
-                st.caption(f"🧾 رقم الفاتورة: `{r['رقم الفاتورة']}`")
+                st.caption(f"🧾 رقم الفاتورة: {r['رقم الفاتورة']}")
 
                 amt = st.number_input("مبلغ الدفعة (ر.س)", min_value=0.0, value=float(r["المتبقي"]), step=10.0)
                 method = st.selectbox("طريقة الدفع", PAY_METHODS)
@@ -565,7 +647,6 @@ elif choice == "💳 الاشتراكات الشهرية":
                             [new_paid, max(new_rem, 0), new_status, str(date.today()), note]
                         save_df("payments", pay_df)
 
-                        # تسجيل الحركة في السجل المالي
                         trans_df = load_df("transactions")
                         trans_df.loc[len(trans_df)] = [str(date.today()), month, sel, amt, method, note]
                         save_df("transactions", trans_df)
@@ -594,11 +675,12 @@ elif choice == "💳 الاشتراكات الشهرية":
             st.info("لا توجد فواتير.")
         else:
             sel = st.selectbox("اختر الطالبة", sorted(pay_df["الطالبة"].unique().tolist()), key="stmt_student")
-            st.write(f"### 🧾 كشف حساب: {sel}")
+            section_title(f"🧾 كشف حساب: {sel}")
             history = pay_df[pay_df["الطالبة"] == sel].sort_values("الشهر")
             if not history.empty:
-                view = history[["رقم الفاتورة", "الشهر", "المبلغ المطلوب", "المدفوع", "المتبقي", "حالة الدفع", "تاريخ آخر دفعة"]].copy()
-                st.dataframe(view, use_container_width=True, hide_index=True)
+                st.dataframe(history[["رقم الفاتورة", "الشهر", "المبلغ المطلوب", "المدفوع",
+                                      "المتبقي", "حالة الدفع", "تاريخ آخر دفعة"]],
+                             use_container_width=True, hide_index=True)
                 tc1, tc2, tc3 = st.columns(3)
                 tc1.metric("💰 إجمالي المطلوب", money(history["المبلغ المطلوب"].sum()))
                 tc2.metric("✅ إجمالي المدفوع", money(history["المدفوع"].sum()))
@@ -608,7 +690,7 @@ elif choice == "💳 الاشتراكات الشهرية":
 
             trans_df = load_df("transactions")
             if not trans_df.empty:
-                st.write("### 💵 سجل الحركات المالية")
+                section_title("💵 سجل الحركات المالية")
                 st.dataframe(trans_df[trans_df["الطالبة"] == sel].sort_values("التاريخ", ascending=False),
                              use_container_width=True, hide_index=True)
 
@@ -617,16 +699,15 @@ elif choice == "💳 الاشتراكات الشهرية":
 #  8) التقارير الشاملة
 # ============================================================
 elif choice == "📈 التقارير الشاملة":
-    st.subheader("📈 التقارير الشاملة")
     att_df, pay_df = load_df("attendance"), load_df("payments")
-
+    section_title("📈 التقارير الشاملة")
     tab1, tab2, tab3 = st.tabs(["💰 التقرير المالي", "✅ تقرير الحضور", "⬇️ تصدير البيانات"])
 
     with tab1:
         if pay_df.empty:
             st.info("لا توجد بيانات مالية.")
         else:
-            st.write("### ملخص التحصيل الشهري")
+            section_title("ملخص التحصيل الشهري")
             fin = pay_df.groupby("الشهر").agg(
                 المطلوب=("المبلغ المطلوب", "sum"),
                 المحصل=("المدفوع", "sum"),
@@ -638,7 +719,7 @@ elif choice == "📈 التقارير الشاملة":
             st.dataframe(fin.sort_values("الشهر", ascending=False), use_container_width=True, hide_index=True)
             st.bar_chart(fin.set_index("الشهر")[["المحصل", "المتبقي"]])
 
-            st.write("### أكثر الطالبات تأخرًا")
+            section_title("أكثر الطالبات تأخرًا")
             late = pay_df[pay_df["حالة الدفع"] != "مدفوع"].groupby("الطالبة").agg(
                 عدد_الأشهر_المتأخرة=("الشهر", "count"),
                 إجمالي_المتبقي=("المتبقي", "sum")).reset_index().sort_values("إجمالي_المتبقي", ascending=False)
@@ -655,10 +736,10 @@ elif choice == "📈 التقارير الشاملة":
             d2 = c2.date_input("إلى تاريخ", value=att_df["التاريخ"].max().date())
             period = att_df[(att_df["التاريخ"] >= pd.Timestamp(d1)) & (att_df["التاريخ"] <= pd.Timestamp(d2))]
 
-            st.write("### الحضور حسب المسار")
+            section_title("الحضور حسب المسار")
             st.dataframe(period.groupby(["المسار", "الحالة"]).size().unstack(fill_value=0), use_container_width=True)
 
-            st.write("### نسبة الحضور لكل طالبة")
+            section_title("نسبة الحضور لكل طالبة")
             per = period.groupby("الطالبة")["الحالة"].agg(
                 حضور=lambda x: (x == "حاضرة").sum(),
                 غياب=lambda x: (x == "غائبة").sum(),
@@ -675,3 +756,5 @@ elif choice == "📈 التقارير الشاملة":
             if not df.empty:
                 st.download_button(f"⬇️ تصدير {label}", df.to_csv(index=False).encode("utf-8-sig"),
                                    f"{key}_report.csv", "text/csv")
+
+st.markdown('<div class="app-footer">🚌 نظام إدارة نقل الطالبات — الإصدار 2.1</div>', unsafe_allow_html=True)
